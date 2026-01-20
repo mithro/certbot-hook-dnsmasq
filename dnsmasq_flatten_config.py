@@ -118,17 +118,19 @@ def main():
     if len(sys.argv) > 1:
         master_config = Path(sys.argv[1])
 
-    lines = parse_config(master_config, exclude_patterns)
+    # Track visited files across all parsing to avoid duplicates
+    visited: set[Path] = set()
+    lines = parse_config(master_config, exclude_patterns, visited)
 
-    # If CONFIG_DIR is set and wasn't already processed via conf-dir in config
-    # (this handles the -7 command line option)
+    # If CONFIG_DIR is set, process any files not already visited via conf-dir
+    # (this handles the -7 command line option used by the init script)
     if default_conf_dir and default_conf_dir.is_dir():
         for f in sorted(default_conf_dir.iterdir()):
             if not f.is_file():
                 continue
             if should_exclude(f.name, exclude_patterns):
                 continue
-            lines.extend(parse_config(f, exclude_patterns, set()))
+            lines.extend(parse_config(f, exclude_patterns, visited))
 
     for line in lines:
         print(line)
