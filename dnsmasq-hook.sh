@@ -1,11 +1,18 @@
 #!/bin/bash
 set -e
 
-# Get directory where this script lives
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get directory where this script lives (resolve symlinks)
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [ -L "$SCRIPT_SOURCE" ]; do
+    SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
+    SCRIPT_SOURCE="$(readlink "$SCRIPT_SOURCE")"
+    # Handle relative symlinks
+    [[ "$SCRIPT_SOURCE" != /* ]] && SCRIPT_SOURCE="$SCRIPT_DIR/$SCRIPT_SOURCE"
+done
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 
 # Generate flattened dnsmasq config
-FLAT_CONFIG=$(mktemp "${SCRIPT_DIR}/.tmp.flat-config.XXXXXX")
+FLAT_CONFIG=$(mktemp /tmp/dnsmasq-flat-config.XXXXXX)
 trap "rm -f '$FLAT_CONFIG'" EXIT
 
 python3 "$SCRIPT_DIR/dnsmasq_flatten_config.py" > "$FLAT_CONFIG"
