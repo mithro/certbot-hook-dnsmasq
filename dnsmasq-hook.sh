@@ -11,11 +11,19 @@ while [ -L "$SCRIPT_SOURCE" ]; do
 done
 SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_SOURCE")" && pwd)"
 
+# Configuration via environment variables:
+#   DNSMASQ_CONF_DIR  - where to write ACME challenge configs (default: /etc/dnsmasq.d)
+#   DNSMASQ_CONF      - instance config file for --test (default: /etc/dnsmasq.conf)
+#   DNSMASQ_SERVICE   - systemd service to restart (default: dnsmasq)
+DNSMASQ_CONF_DIR="${DNSMASQ_CONF_DIR:-/etc/dnsmasq.d}"
+DNSMASQ_CONF="${DNSMASQ_CONF:-/etc/dnsmasq.conf}"
+DNSMASQ_SERVICE="${DNSMASQ_SERVICE:-dnsmasq}"
+
 # Generate flattened dnsmasq config
 FLAT_CONFIG=$(mktemp /tmp/dnsmasq-flat-config.XXXXXX)
 trap "rm -f '$FLAT_CONFIG'" EXIT
 
-python3 "$SCRIPT_DIR/dnsmasq_flatten_config.py" > "$FLAT_CONFIG"
+python3 "$SCRIPT_DIR/dnsmasq_flatten_config.py" "$DNSMASQ_CONF" > "$FLAT_CONFIG"
 
 # Extract auth-server (last wins, take just the zone name before any comma)
 AUTH_ZONE=$(grep '^auth-server=' "$FLAT_CONFIG" | tail -1 | cut -d= -f2 | cut -d, -f1)
@@ -52,15 +60,15 @@ echo "  Secondary servers: $AUTH_SEC_SERVERS"
 echo "  Public IPv4: $PUBLIC_IPV4"
 
 # Create the ACME challenge TXT record
-cat <<EOF > /etc/dnsmasq.d/dnsmasq.acme.$CERTBOT_DOMAIN.conf
+cat <<EOF > "$DNSMASQ_CONF_DIR/dnsmasq.acme.$CERTBOT_DOMAIN.conf"
 dns-rr=$CERTBOT_DOMAIN.,257,000569737375656C657473656E63727970742E6F7267
 txt-record=_acme-challenge.$CERTBOT_DOMAIN.,$CERTBOT_VALIDATION
 EOF
 
-dnsmasq --test 2>&1 || exit 1
+dnsmasq --test -C "$DNSMASQ_CONF" 2>&1 || exit 1
 
-systemctl restart dnsmasq
-systemctl status dnsmasq
+systemctl restart "$DNSMASQ_SERVICE"
+systemctl status "$DNSMASQ_SERVICE"
 
 echo "Local TXT record:"
 dig @localhost TXT _acme-challenge.$CERTBOT_DOMAIN +short
