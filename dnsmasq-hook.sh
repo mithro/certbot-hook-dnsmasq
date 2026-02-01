@@ -71,10 +71,10 @@ systemctl restart "$DNSMASQ_SERVICE"
 systemctl status "$DNSMASQ_SERVICE"
 
 echo "Local TXT record:"
-dig @localhost TXT _acme-challenge.$CERTBOT_DOMAIN +short
+dig @"$PUBLIC_IPV4" TXT _acme-challenge.$CERTBOT_DOMAIN +short
 
 # Verify local server has the correct record
-LOCAL_TXT=$(dig @localhost TXT _acme-challenge.$CERTBOT_DOMAIN +short | tr -d '"')
+LOCAL_TXT=$(dig @"$PUBLIC_IPV4" TXT _acme-challenge.$CERTBOT_DOMAIN +short | tr -d '"')
 if [ "$LOCAL_TXT" != "$CERTBOT_VALIDATION" ]; then
     echo "ERROR: Local DNS does not have correct TXT record"
     echo "Expected: $CERTBOT_VALIDATION"
