@@ -1,5 +1,6 @@
 """Auth-hook logic for certbot DNS-01 challenges with dnsmasq."""
 
+import hashlib
 import subprocess
 import sys
 import time
@@ -23,9 +24,13 @@ _CAA_HEX = "000569737375656C657473656E63727970742E6F7267"
 def write_acme_challenge(conf_dir: Path, domain: str, validation: str) -> Path:
     """Write dnsmasq config file with ACME challenge TXT record.
 
+    Uses a hash of the validation token in the filename so that multiple
+    challenges for the same domain (e.g. wildcard + base) get separate files.
+
     Returns the path to the created config file.
     """
-    config_file = conf_dir / f"dnsmasq.acme.{domain}.conf"
+    token_hash = hashlib.sha256(validation.encode()).hexdigest()[:8]
+    config_file = conf_dir / f"dnsmasq.acme.{domain}.{token_hash}.conf"
     config_file.write_text(
         f"dns-rr={domain}.,257,{_CAA_HEX}\n"
         f"txt-record=_acme-challenge.{domain}.,{validation}\n"

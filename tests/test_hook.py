@@ -1,5 +1,6 @@
 """Tests for certbot_hook_dnsmasq.hook"""
 
+import hashlib
 import subprocess
 from pathlib import Path
 from unittest.mock import patch, call
@@ -11,24 +12,33 @@ from certbot_hook_dnsmasq.hook import run_auth_hook, write_acme_challenge, verif
 
 
 class TestWriteAcmeChallenge:
-    def test_creates_config_file(self, tmp_path):
-        write_acme_challenge(tmp_path, "example.com", "test-token-123")
+    def test_creates_config_file_with_hash(self, tmp_path):
+        path = write_acme_challenge(tmp_path, "example.com", "test-token-123")
 
-        config_file = tmp_path / "dnsmasq.acme.example.com.conf"
-        assert config_file.exists()
-        content = config_file.read_text()
+        token_hash = hashlib.sha256("test-token-123".encode()).hexdigest()[:8]
+        expected_name = f"dnsmasq.acme.example.com.{token_hash}.conf"
+        assert path.name == expected_name
+        assert path.exists()
+        content = path.read_text()
         assert "txt-record=_acme-challenge.example.com.,test-token-123" in content
         assert "dns-rr=example.com.,257," in content
 
-    def test_overwrites_existing(self, tmp_path):
-        config_file = tmp_path / "dnsmasq.acme.example.com.conf"
-        config_file.write_text("old content")
+    def test_different_tokens_create_different_files(self, tmp_path):
+        path1 = write_acme_challenge(tmp_path, "example.com", "token-A")
+        path2 = write_acme_challenge(tmp_path, "example.com", "token-B")
 
-        write_acme_challenge(tmp_path, "example.com", "new-token")
+        assert path1.name != path2.name
+        assert path1.exists()
+        assert path2.exists()
 
-        content = config_file.read_text()
-        assert "old content" not in content
-        assert "new-token" in content
+    def test_same_token_overwrites_same_file(self, tmp_path):
+        path1 = write_acme_challenge(tmp_path, "example.com", "same-token")
+        path2 = write_acme_challenge(tmp_path, "example.com", "same-token")
+
+        assert path1 == path2
+        # Only one file for this token
+        matching = list(tmp_path.glob("dnsmasq.acme.example.com.*.conf"))
+        assert len(matching) == 1
 
 
 class TestVerifyLocalDns:
