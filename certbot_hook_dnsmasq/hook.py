@@ -82,3 +82,53 @@ def wait_for_sync(
             return responses
 
         time.sleep(interval)
+
+
+def run_auth_hook(
+    conf_dir: Path,
+    conf: Path,
+    service: str,
+    domain: str,
+    validation: str,
+) -> int:
+    """Run the full auth-hook workflow. Returns 0 on success, 1 on failure."""
+    # Flatten config and extract values
+    lines = flatten_config(conf)
+    values = extract_config_values(lines)
+
+    # Validate required values
+    if not values.auth_zone:
+        print("ERROR: No auth-server found in dnsmasq config", file=sys.stderr)
+        return 1
+    if not values.auth_sec_servers:
+        print("ERROR: No auth-sec-servers found in dnsmasq config", file=sys.stderr)
+        return 1
+    if not values.public_ipv4:
+        print("ERROR: No public IPv4 listen-address found in dnsmasq config", file=sys.stderr)
+        return 1
+
+    print("Discovered dnsmasq config:")
+    print(f"  Zone: {values.auth_zone}")
+    print(f"  Secondary servers: {' '.join(values.auth_sec_servers)}")
+    print(f"  Public IPv4: {values.public_ipv4}")
+
+    # Write ACME challenge config
+    write_acme_challenge(conf_dir, domain, validation)
+
+    # Test and restart dnsmasq
+    run_dnsmasq_test(str(conf))
+    run_systemctl("restart", service)
+    run_systemctl("status", service)
+
+    # Verify local DNS
+    if not verify_local_dns(values.public_ipv4, domain, validation):
+        return 1
+
+    # Notify secondaries and wait for sync
+    print("Sending NOTIFY to secondaries...")
+    run_ldns_notify(values.public_ipv4, values.auth_zone, values.auth_sec_servers)
+
+    print("Waiting for secondaries to sync (max 120s)...")
+    wait_for_sync(values.auth_sec_servers, domain, validation)
+
+    return 0
