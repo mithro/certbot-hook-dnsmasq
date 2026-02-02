@@ -1,5 +1,6 @@
 """Auth-hook logic for certbot DNS-01 challenges with dnsmasq."""
 
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -11,12 +12,11 @@ from certbot_hook_dnsmasq.external import (
     run_systemctl,
 )
 from certbot_hook_dnsmasq.flatten import (
-    DnsmasqConfigValues,
     extract_config_values,
     flatten_config,
 )
 
-# CAA record: hex-encoded "issuelet'sencrypt.org" with tag byte
+# CAA record wire format: flags=0, tag="issue", value="letsencrypt.org"
 _CAA_HEX = "000569737375656C657473656E63727970742E6F7267"
 
 
@@ -90,6 +90,7 @@ def run_auth_hook(
     service: str,
     domain: str,
     validation: str,
+    max_wait: int = 120,
 ) -> int:
     """Run the full auth-hook workflow. Returns 0 on success, 1 on failure."""
     # Flatten config and extract values
@@ -116,9 +117,13 @@ def run_auth_hook(
     write_acme_challenge(conf_dir, domain, validation)
 
     # Test and restart dnsmasq
-    run_dnsmasq_test(str(conf))
-    run_systemctl("restart", service)
-    run_systemctl("status", service)
+    try:
+        run_dnsmasq_test(str(conf))
+        run_systemctl("restart", service)
+        run_systemctl("status", service)
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR: Command failed: {e.cmd}", file=sys.stderr)
+        return 1
 
     # Verify local DNS
     if not verify_local_dns(values.public_ipv4, domain, validation):
@@ -126,9 +131,13 @@ def run_auth_hook(
 
     # Notify secondaries and wait for sync
     print("Sending NOTIFY to secondaries...")
-    run_ldns_notify(values.public_ipv4, values.auth_zone, values.auth_sec_servers)
+    try:
+        run_ldns_notify(values.public_ipv4, values.auth_zone, values.auth_sec_servers)
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR: Command failed: {e.cmd}", file=sys.stderr)
+        return 1
 
-    print("Waiting for secondaries to sync (max 120s)...")
-    wait_for_sync(values.auth_sec_servers, domain, validation)
+    print(f"Waiting for secondaries to sync (max {max_wait}s)...")
+    wait_for_sync(values.auth_sec_servers, domain, validation, max_wait=max_wait)
 
     return 0

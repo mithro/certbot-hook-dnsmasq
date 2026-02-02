@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 
+from certbot_hook_dnsmasq import __version__
 from certbot_hook_dnsmasq.flatten import flatten_config
 from certbot_hook_dnsmasq.hook import run_auth_hook
 
@@ -14,6 +15,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="certbot-hook-dnsmasq",
         description="Certbot DNS-01 hook for dnsmasq",
+    )
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
     )
     subparsers = parser.add_subparsers(dest="subcommand", required=True)
 
@@ -56,13 +60,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _resolve(cli_value, env_var: str, default):
-    """Resolve a config value: CLI flag > env var > default."""
+def _resolve_path(cli_value: Path | None, env_var: str, default: Path) -> Path:
+    """Resolve a Path config value: CLI flag > env var > default."""
     if cli_value is not None:
         return cli_value
     env = os.environ.get(env_var)
     if env is not None:
-        return type(default)(env) if not isinstance(default, str) else env
+        return Path(env)
+    return default
+
+
+def _resolve_str(cli_value: str | None, env_var: str, default: str) -> str:
+    """Resolve a string config value: CLI flag > env var > default."""
+    if cli_value is not None:
+        return cli_value
+    env = os.environ.get(env_var)
+    if env is not None:
+        return env
     return default
 
 
@@ -88,15 +102,9 @@ def main() -> int:
             print("ERROR: CERTBOT_VALIDATION environment variable not set", file=sys.stderr)
             return 1
 
-        conf_dir = _resolve(args.conf_dir, "DNSMASQ_CONF_DIR", Path("/etc/dnsmasq.d"))
-        conf = _resolve(args.conf, "DNSMASQ_CONF", Path("/etc/dnsmasq.conf"))
-        service = _resolve(args.service, "DNSMASQ_SERVICE", "dnsmasq")
-
-        # Ensure Path types
-        if isinstance(conf_dir, str):
-            conf_dir = Path(conf_dir)
-        if isinstance(conf, str):
-            conf = Path(conf)
+        conf_dir = _resolve_path(args.conf_dir, "DNSMASQ_CONF_DIR", Path("/etc/dnsmasq.d"))
+        conf = _resolve_path(args.conf, "DNSMASQ_CONF", Path("/etc/dnsmasq.conf"))
+        service = _resolve_str(args.service, "DNSMASQ_SERVICE", "dnsmasq")
 
         return run_auth_hook(
             conf_dir=conf_dir,

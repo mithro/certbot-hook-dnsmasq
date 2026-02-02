@@ -13,7 +13,9 @@ def query_txt_record(server: str, domain: str) -> str | None:
     )
     if result.returncode != 0:
         return None
-    value = result.stdout.strip().strip('"')
+    # Take only the first line (multiple TXT records possible)
+    first_line = result.stdout.strip().split('\n')[0]
+    value = first_line.strip('"')
     return value if value else None
 
 
