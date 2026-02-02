@@ -6,6 +6,7 @@ import subprocess
 import pytest
 
 from certbot_hook_dnsmasq.external import (
+    query_all_txt_records,
     query_txt_record,
     run_dnsmasq_test,
     run_ldns_notify,
@@ -91,3 +92,41 @@ class TestRunLdnsNotify:
              "ns2.example.com", "ns3.example.com"],
             check=True,
         )
+
+
+class TestQueryAllTxtRecords:
+    @patch("certbot_hook_dnsmasq.external.subprocess.run")
+    def test_returns_set_of_values(self, mock_run):
+        mock_run.return_value = MagicMock(
+            stdout='"token-A"\n"token-B"\n',
+            returncode=0,
+        )
+        result = query_all_txt_records("8.8.8.8", "_acme-challenge.example.com")
+        assert result == {"token-A", "token-B"}
+        mock_run.assert_called_once_with(
+            ["dig", "@8.8.8.8", "TXT", "_acme-challenge.example.com", "+short"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    @patch("certbot_hook_dnsmasq.external.subprocess.run")
+    def test_returns_single_value_set(self, mock_run):
+        mock_run.return_value = MagicMock(
+            stdout='"only-token"\n',
+            returncode=0,
+        )
+        result = query_all_txt_records("8.8.8.8", "_acme-challenge.example.com")
+        assert result == {"only-token"}
+
+    @patch("certbot_hook_dnsmasq.external.subprocess.run")
+    def test_returns_empty_set_on_empty(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="\n", returncode=0)
+        result = query_all_txt_records("8.8.8.8", "_acme-challenge.example.com")
+        assert result == set()
+
+    @patch("certbot_hook_dnsmasq.external.subprocess.run")
+    def test_returns_empty_set_on_failure(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="", returncode=9)
+        result = query_all_txt_records("8.8.8.8", "_acme-challenge.example.com")
+        assert result == set()
