@@ -8,7 +8,6 @@ from pathlib import Path
 
 from certbot_hook_dnsmasq.external import (
     query_all_txt_records,
-    query_txt_record,
     run_dnsmasq_test,
     run_ldns_notify,
     run_systemctl,
@@ -132,10 +131,24 @@ def run_auth_hook(
     service: str,
     domain: str,
     validation: str,
+    remaining_challenges: int = 0,
     max_wait: int = 120,
 ) -> int:
-    """Run the full auth-hook workflow. Returns 0 on success, 1 on failure."""
-    # Flatten config and extract values
+    """Run the auth-hook workflow. Returns 0 on success, 1 on failure.
+
+    When remaining_challenges > 0, only writes the config file and returns.
+    When remaining_challenges == 0, writes the config file then finalizes:
+    restart dnsmasq, verify all pending challenges, notify and wait for sync.
+    """
+    # Always write the config file for this challenge
+    print(f"Writing ACME challenge for {domain}")
+    write_acme_challenge(conf_dir, domain, validation)
+
+    if remaining_challenges > 0:
+        print(f"  {remaining_challenges} challenge(s) remaining, deferring restart")
+        return 0
+
+    # Final invocation: flatten config and extract values
     lines = flatten_config(conf)
     values = extract_config_values(lines)
 
@@ -155,9 +168,6 @@ def run_auth_hook(
     print(f"  Secondary servers: {' '.join(values.auth_sec_servers)}")
     print(f"  Public IPv4: {values.public_ipv4}")
 
-    # Write ACME challenge config
-    write_acme_challenge(conf_dir, domain, validation)
-
     # Test and restart dnsmasq
     try:
         run_dnsmasq_test(str(conf))
@@ -167,8 +177,10 @@ def run_auth_hook(
         print(f"ERROR: Command failed: {e.cmd}", file=sys.stderr)
         return 1
 
-    # Verify local DNS
-    if not verify_local_dns(values.public_ipv4, domain, validation):
+    # Discover all pending challenges and verify local DNS
+    challenges = read_pending_challenges(conf_dir)
+    print(f"Verifying {sum(len(t) for t in challenges.values())} TXT record(s) across {len(challenges)} domain(s)")
+    if not verify_local_dns(values.public_ipv4, challenges):
         return 1
 
     # Notify secondaries and wait for sync
@@ -180,6 +192,7 @@ def run_auth_hook(
         return 1
 
     print(f"Waiting for secondaries to sync (max {max_wait}s)...")
-    wait_for_sync(values.auth_sec_servers, domain, validation, max_wait=max_wait)
+    if not wait_for_sync(values.auth_sec_servers, challenges, max_wait=max_wait):
+        return 1
 
     return 0

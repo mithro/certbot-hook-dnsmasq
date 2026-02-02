@@ -224,14 +224,16 @@ class TestRunAuthHook:
     @patch("certbot_hook_dnsmasq.hook.wait_for_sync")
     @patch("certbot_hook_dnsmasq.hook.run_ldns_notify")
     @patch("certbot_hook_dnsmasq.hook.verify_local_dns")
+    @patch("certbot_hook_dnsmasq.hook.read_pending_challenges")
     @patch("certbot_hook_dnsmasq.hook.run_systemctl")
     @patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test")
     @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
     @patch("certbot_hook_dnsmasq.hook.extract_config_values")
     @patch("certbot_hook_dnsmasq.hook.flatten_config")
-    def test_orchestrates_full_flow(
+    def test_full_flow_remaining_zero(
         self, mock_flatten, mock_extract, mock_write,
-        mock_test, mock_systemctl, mock_verify, mock_notify, mock_wait,
+        mock_test, mock_systemctl, mock_read_pending,
+        mock_verify, mock_notify, mock_wait,
         tmp_path,
     ):
         mock_flatten.return_value = ["auth-server=example.com"]
@@ -240,9 +242,10 @@ class TestRunAuthHook:
             auth_sec_servers=["ns2.example.com"],
             public_ipv4="203.0.113.1",
         )
-        mock_write.return_value = tmp_path / "dnsmasq.acme.example.com.conf"
+        mock_write.return_value = tmp_path / "dnsmasq.acme.example.com.abcd1234.conf"
+        mock_read_pending.return_value = {"example.com": {"test-token"}}
         mock_verify.return_value = True
-        mock_wait.return_value = {"ns2.example.com": "test-token"}
+        mock_wait.return_value = True
 
         result = run_auth_hook(
             conf_dir=tmp_path,
@@ -250,27 +253,68 @@ class TestRunAuthHook:
             service="dnsmasq",
             domain="example.com",
             validation="test-token",
+            remaining_challenges=0,
         )
 
         assert result == 0
-        mock_flatten.assert_called_once_with(Path("/etc/dnsmasq.conf"))
-        mock_extract.assert_called_once()
         mock_write.assert_called_once_with(tmp_path, "example.com", "test-token")
-        mock_test.assert_called_once_with(str(Path("/etc/dnsmasq.conf")))
-        assert mock_systemctl.call_count == 2  # restart + status
-        mock_verify.assert_called_once_with("203.0.113.1", "example.com", "test-token")
-        mock_notify.assert_called_once_with("203.0.113.1", "example.com", ["ns2.example.com"])
+        mock_flatten.assert_called_once()
+        mock_test.assert_called_once()
+        assert mock_systemctl.call_count == 2
+        mock_read_pending.assert_called_once_with(tmp_path)
+        mock_verify.assert_called_once_with("203.0.113.1", {"example.com": {"test-token"}})
+        mock_notify.assert_called_once()
         mock_wait.assert_called_once()
 
+    @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
+    def test_write_only_when_remaining_positive(self, mock_write, tmp_path):
+        mock_write.return_value = tmp_path / "test.conf"
+
+        result = run_auth_hook(
+            conf_dir=tmp_path,
+            conf=Path("/etc/dnsmasq.conf"),
+            service="dnsmasq",
+            domain="example.com",
+            validation="test-token",
+            remaining_challenges=2,
+        )
+
+        assert result == 0
+        mock_write.assert_called_once_with(tmp_path, "example.com", "test-token")
+
+    @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
+    def test_no_restart_when_remaining_positive(self, mock_write, tmp_path):
+        mock_write.return_value = tmp_path / "test.conf"
+
+        with patch("certbot_hook_dnsmasq.hook.flatten_config") as mock_flatten:
+            result = run_auth_hook(
+                conf_dir=tmp_path,
+                conf=Path("/etc/dnsmasq.conf"),
+                service="dnsmasq",
+                domain="example.com",
+                validation="test-token",
+                remaining_challenges=3,
+            )
+
+        assert result == 0
+        mock_flatten.assert_not_called()
+
+    @patch("certbot_hook_dnsmasq.hook.read_pending_challenges")
+    @patch("certbot_hook_dnsmasq.hook.run_systemctl")
+    @patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test")
+    @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
     @patch("certbot_hook_dnsmasq.hook.extract_config_values")
     @patch("certbot_hook_dnsmasq.hook.flatten_config")
-    def test_exits_on_missing_auth_zone(self, mock_flatten, mock_extract, tmp_path):
+    def test_exits_on_missing_auth_zone(
+        self, mock_flatten, mock_extract, mock_write,
+        mock_test, mock_systemctl, mock_read_pending,
+        tmp_path,
+    ):
         mock_flatten.return_value = []
         mock_extract.return_value = DnsmasqConfigValues(
-            auth_zone=None,
-            auth_sec_servers=[],
-            public_ipv4=None,
+            auth_zone=None, auth_sec_servers=[], public_ipv4=None,
         )
+        mock_write.return_value = tmp_path / "test.conf"
 
         result = run_auth_hook(
             conf_dir=tmp_path,
@@ -278,18 +322,26 @@ class TestRunAuthHook:
             service="dnsmasq",
             domain="example.com",
             validation="test-token",
+            remaining_challenges=0,
         )
         assert result == 1
 
+    @patch("certbot_hook_dnsmasq.hook.read_pending_challenges")
+    @patch("certbot_hook_dnsmasq.hook.run_systemctl")
+    @patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test")
+    @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
     @patch("certbot_hook_dnsmasq.hook.extract_config_values")
     @patch("certbot_hook_dnsmasq.hook.flatten_config")
-    def test_exits_on_missing_sec_servers(self, mock_flatten, mock_extract, tmp_path):
+    def test_exits_on_missing_sec_servers(
+        self, mock_flatten, mock_extract, mock_write,
+        mock_test, mock_systemctl, mock_read_pending,
+        tmp_path,
+    ):
         mock_flatten.return_value = ["auth-server=example.com"]
         mock_extract.return_value = DnsmasqConfigValues(
-            auth_zone="example.com",
-            auth_sec_servers=[],
-            public_ipv4="203.0.113.1",
+            auth_zone="example.com", auth_sec_servers=[], public_ipv4="203.0.113.1",
         )
+        mock_write.return_value = tmp_path / "test.conf"
 
         result = run_auth_hook(
             conf_dir=tmp_path,
@@ -297,18 +349,26 @@ class TestRunAuthHook:
             service="dnsmasq",
             domain="example.com",
             validation="test-token",
+            remaining_challenges=0,
         )
         assert result == 1
 
+    @patch("certbot_hook_dnsmasq.hook.read_pending_challenges")
+    @patch("certbot_hook_dnsmasq.hook.run_systemctl")
+    @patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test")
+    @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
     @patch("certbot_hook_dnsmasq.hook.extract_config_values")
     @patch("certbot_hook_dnsmasq.hook.flatten_config")
-    def test_exits_on_missing_public_ipv4(self, mock_flatten, mock_extract, tmp_path):
+    def test_exits_on_missing_public_ipv4(
+        self, mock_flatten, mock_extract, mock_write,
+        mock_test, mock_systemctl, mock_read_pending,
+        tmp_path,
+    ):
         mock_flatten.return_value = ["auth-server=example.com"]
         mock_extract.return_value = DnsmasqConfigValues(
-            auth_zone="example.com",
-            auth_sec_servers=["ns2.example.com"],
-            public_ipv4=None,
+            auth_zone="example.com", auth_sec_servers=["ns2.example.com"], public_ipv4=None,
         )
+        mock_write.return_value = tmp_path / "test.conf"
 
         result = run_auth_hook(
             conf_dir=tmp_path,
@@ -316,14 +376,17 @@ class TestRunAuthHook:
             service="dnsmasq",
             domain="example.com",
             validation="test-token",
+            remaining_challenges=0,
         )
         assert result == 1
 
+    @patch("certbot_hook_dnsmasq.hook.read_pending_challenges")
     @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
     @patch("certbot_hook_dnsmasq.hook.extract_config_values")
     @patch("certbot_hook_dnsmasq.hook.flatten_config")
     def test_exits_on_dnsmasq_test_failure(
-        self, mock_flatten, mock_extract, mock_write, tmp_path,
+        self, mock_flatten, mock_extract, mock_write,
+        mock_read_pending, tmp_path,
     ):
         mock_flatten.return_value = ["auth-server=example.com"]
         mock_extract.return_value = DnsmasqConfigValues(
@@ -341,9 +404,11 @@ class TestRunAuthHook:
                 service="dnsmasq",
                 domain="example.com",
                 validation="test-token",
+                remaining_challenges=0,
             )
         assert result == 1
 
+    @patch("certbot_hook_dnsmasq.hook.read_pending_challenges")
     @patch("certbot_hook_dnsmasq.hook.verify_local_dns")
     @patch("certbot_hook_dnsmasq.hook.run_systemctl")
     @patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test")
@@ -352,7 +417,7 @@ class TestRunAuthHook:
     @patch("certbot_hook_dnsmasq.hook.flatten_config")
     def test_exits_on_ldns_notify_failure(
         self, mock_flatten, mock_extract, mock_write, mock_test,
-        mock_systemctl, mock_verify, tmp_path,
+        mock_systemctl, mock_verify, mock_read_pending, tmp_path,
     ):
         mock_flatten.return_value = ["auth-server=example.com"]
         mock_extract.return_value = DnsmasqConfigValues(
@@ -361,6 +426,7 @@ class TestRunAuthHook:
             public_ipv4="203.0.113.1",
         )
         mock_write.return_value = tmp_path / "test.conf"
+        mock_read_pending.return_value = {"example.com": {"test-token"}}
         mock_verify.return_value = True
 
         with patch("certbot_hook_dnsmasq.hook.run_ldns_notify",
@@ -371,15 +437,18 @@ class TestRunAuthHook:
                 service="dnsmasq",
                 domain="example.com",
                 validation="test-token",
+                remaining_challenges=0,
             )
         assert result == 1
 
+    @patch("certbot_hook_dnsmasq.hook.read_pending_challenges")
     @patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test")
     @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
     @patch("certbot_hook_dnsmasq.hook.extract_config_values")
     @patch("certbot_hook_dnsmasq.hook.flatten_config")
     def test_exits_on_verify_failure(
-        self, mock_flatten, mock_extract, mock_write, mock_test, tmp_path,
+        self, mock_flatten, mock_extract, mock_write, mock_test,
+        mock_read_pending, tmp_path,
     ):
         mock_flatten.return_value = ["auth-server=example.com"]
         mock_extract.return_value = DnsmasqConfigValues(
@@ -388,6 +457,7 @@ class TestRunAuthHook:
             public_ipv4="203.0.113.1",
         )
         mock_write.return_value = tmp_path / "test.conf"
+        mock_read_pending.return_value = {"example.com": {"test-token"}}
 
         with patch("certbot_hook_dnsmasq.hook.run_systemctl"):
             with patch("certbot_hook_dnsmasq.hook.verify_local_dns", return_value=False):
@@ -397,5 +467,42 @@ class TestRunAuthHook:
                     service="dnsmasq",
                     domain="example.com",
                     validation="test-token",
+                    remaining_challenges=0,
                 )
+        assert result == 1
+
+    @patch("certbot_hook_dnsmasq.hook.wait_for_sync")
+    @patch("certbot_hook_dnsmasq.hook.run_ldns_notify")
+    @patch("certbot_hook_dnsmasq.hook.verify_local_dns")
+    @patch("certbot_hook_dnsmasq.hook.read_pending_challenges")
+    @patch("certbot_hook_dnsmasq.hook.run_systemctl")
+    @patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test")
+    @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
+    @patch("certbot_hook_dnsmasq.hook.extract_config_values")
+    @patch("certbot_hook_dnsmasq.hook.flatten_config")
+    def test_exits_on_sync_timeout(
+        self, mock_flatten, mock_extract, mock_write,
+        mock_test, mock_systemctl, mock_read_pending,
+        mock_verify, mock_notify, mock_wait,
+        tmp_path,
+    ):
+        mock_flatten.return_value = ["auth-server=example.com"]
+        mock_extract.return_value = DnsmasqConfigValues(
+            auth_zone="example.com",
+            auth_sec_servers=["ns2.example.com"],
+            public_ipv4="203.0.113.1",
+        )
+        mock_write.return_value = tmp_path / "test.conf"
+        mock_read_pending.return_value = {"example.com": {"test-token"}}
+        mock_verify.return_value = True
+        mock_wait.return_value = False  # sync timed out
+
+        result = run_auth_hook(
+            conf_dir=tmp_path,
+            conf=Path("/etc/dnsmasq.conf"),
+            service="dnsmasq",
+            domain="example.com",
+            validation="test-token",
+            remaining_challenges=0,
+        )
         assert result == 1
