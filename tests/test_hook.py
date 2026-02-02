@@ -8,7 +8,7 @@ from unittest.mock import patch, call
 import pytest
 
 from certbot_hook_dnsmasq.flatten import DnsmasqConfigValues
-from certbot_hook_dnsmasq.hook import run_auth_hook, write_acme_challenge, verify_local_dns, wait_for_sync
+from certbot_hook_dnsmasq.hook import run_auth_hook, write_acme_challenge, verify_local_dns, wait_for_sync, read_pending_challenges
 
 
 class TestWriteAcmeChallenge:
@@ -39,6 +39,38 @@ class TestWriteAcmeChallenge:
         # Only one file for this token
         matching = list(tmp_path.glob("dnsmasq.acme.example.com.*.conf"))
         assert len(matching) == 1
+
+
+class TestReadPendingChallenges:
+    def test_reads_single_challenge(self, tmp_path):
+        write_acme_challenge(tmp_path, "example.com", "token-A")
+        challenges = read_pending_challenges(tmp_path)
+        assert challenges == {"example.com": {"token-A"}}
+
+    def test_reads_multiple_domains(self, tmp_path):
+        write_acme_challenge(tmp_path, "example.com", "token-A")
+        write_acme_challenge(tmp_path, "www.example.com", "token-B")
+        challenges = read_pending_challenges(tmp_path)
+        assert challenges == {
+            "example.com": {"token-A"},
+            "www.example.com": {"token-B"},
+        }
+
+    def test_reads_multiple_tokens_same_domain(self, tmp_path):
+        write_acme_challenge(tmp_path, "example.com", "token-A")
+        write_acme_challenge(tmp_path, "example.com", "token-B")
+        challenges = read_pending_challenges(tmp_path)
+        assert challenges == {"example.com": {"token-A", "token-B"}}
+
+    def test_ignores_non_acme_files(self, tmp_path):
+        write_acme_challenge(tmp_path, "example.com", "token-A")
+        (tmp_path / "other.conf").write_text("server=8.8.8.8\n")
+        challenges = read_pending_challenges(tmp_path)
+        assert challenges == {"example.com": {"token-A"}}
+
+    def test_empty_directory(self, tmp_path):
+        challenges = read_pending_challenges(tmp_path)
+        assert challenges == {}
 
 
 class TestVerifyLocalDns:

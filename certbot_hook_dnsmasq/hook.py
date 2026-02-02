@@ -38,6 +38,23 @@ def write_acme_challenge(conf_dir: Path, domain: str, validation: str) -> Path:
     return config_file
 
 
+def read_pending_challenges(conf_dir: Path) -> dict[str, set[str]]:
+    """Scan conf_dir for ACME challenge config files and extract (domain, token) pairs.
+
+    Returns a dict mapping domain -> set of validation tokens.
+    """
+    challenges: dict[str, set[str]] = {}
+    for path in conf_dir.glob("dnsmasq.acme.*.conf"):
+        for line in path.read_text().splitlines():
+            if line.startswith("txt-record=_acme-challenge."):
+                # txt-record=_acme-challenge.example.com.,token-value
+                after_prefix = line[len("txt-record=_acme-challenge."):]
+                domain_with_dot, token = after_prefix.split(",", 1)
+                domain = domain_with_dot.rstrip(".")
+                challenges.setdefault(domain, set()).add(token)
+    return challenges
+
+
 def verify_local_dns(public_ipv4: str, domain: str, validation: str) -> bool:
     """Verify the local DNS server has the correct ACME challenge TXT record."""
     record = f"_acme-challenge.{domain}"
