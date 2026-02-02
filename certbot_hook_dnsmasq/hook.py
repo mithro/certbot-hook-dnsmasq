@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from certbot_hook_dnsmasq.external import (
+    query_all_txt_records,
     query_txt_record,
     run_dnsmasq_test,
     run_ldns_notify,
@@ -55,16 +56,25 @@ def read_pending_challenges(conf_dir: Path) -> dict[str, set[str]]:
     return challenges
 
 
-def verify_local_dns(public_ipv4: str, domain: str, validation: str) -> bool:
-    """Verify the local DNS server has the correct ACME challenge TXT record."""
-    record = f"_acme-challenge.{domain}"
-    value = query_txt_record(public_ipv4, record)
-    if value != validation:
-        print(f"ERROR: Local DNS does not have correct TXT record", file=sys.stderr)
-        print(f"  Expected: {validation}", file=sys.stderr)
-        print(f"  Got: {value!r}", file=sys.stderr)
-        return False
-    return True
+def verify_local_dns(public_ipv4: str, challenges: dict[str, set[str]]) -> bool:
+    """Verify the local DNS server has all expected ACME challenge TXT records.
+
+    challenges is a dict mapping domain -> set of expected validation tokens.
+    Returns True only if all expected tokens are present for all domains.
+    """
+    all_ok = True
+    for domain in sorted(challenges):
+        expected = challenges[domain]
+        record = f"_acme-challenge.{domain}"
+        actual = query_all_txt_records(public_ipv4, record)
+        missing = expected - actual
+        if missing:
+            print(f"ERROR: Local DNS missing TXT records for {record}", file=sys.stderr)
+            print(f"  Expected: {sorted(expected)}", file=sys.stderr)
+            print(f"  Got: {sorted(actual)}", file=sys.stderr)
+            print(f"  Missing: {sorted(missing)}", file=sys.stderr)
+            all_ok = False
+    return all_ok
 
 
 def wait_for_sync(

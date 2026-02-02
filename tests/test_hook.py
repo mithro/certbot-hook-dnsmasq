@@ -74,23 +74,61 @@ class TestReadPendingChallenges:
 
 
 class TestVerifyLocalDns:
-    @patch("certbot_hook_dnsmasq.hook.query_txt_record")
-    def test_returns_true_when_matches(self, mock_query):
-        mock_query.return_value = "test-token"
-        result = verify_local_dns("203.0.113.1", "example.com", "test-token")
+    @patch("certbot_hook_dnsmasq.hook.query_all_txt_records")
+    def test_returns_true_when_all_present(self, mock_query):
+        mock_query.return_value = {"token-A", "token-B"}
+        challenges = {"example.com": {"token-A", "token-B"}}
+        result = verify_local_dns("203.0.113.1", challenges)
         assert result is True
         mock_query.assert_called_once_with("203.0.113.1", "_acme-challenge.example.com")
 
-    @patch("certbot_hook_dnsmasq.hook.query_txt_record")
-    def test_returns_false_when_mismatch(self, mock_query):
-        mock_query.return_value = "wrong-token"
-        result = verify_local_dns("203.0.113.1", "example.com", "test-token")
+    @patch("certbot_hook_dnsmasq.hook.query_all_txt_records")
+    def test_returns_true_with_extra_records(self, mock_query):
+        """Stale records from previous runs don't cause failure."""
+        mock_query.return_value = {"token-A", "old-stale-token"}
+        challenges = {"example.com": {"token-A"}}
+        result = verify_local_dns("203.0.113.1", challenges)
+        assert result is True
+
+    @patch("certbot_hook_dnsmasq.hook.query_all_txt_records")
+    def test_returns_false_when_missing(self, mock_query):
+        mock_query.return_value = {"token-A"}
+        challenges = {"example.com": {"token-A", "token-B"}}
+        result = verify_local_dns("203.0.113.1", challenges)
         assert result is False
 
-    @patch("certbot_hook_dnsmasq.hook.query_txt_record")
-    def test_returns_false_when_none(self, mock_query):
-        mock_query.return_value = None
-        result = verify_local_dns("203.0.113.1", "example.com", "test-token")
+    @patch("certbot_hook_dnsmasq.hook.query_all_txt_records")
+    def test_returns_false_when_empty(self, mock_query):
+        mock_query.return_value = set()
+        challenges = {"example.com": {"token-A"}}
+        result = verify_local_dns("203.0.113.1", challenges)
+        assert result is False
+
+    @patch("certbot_hook_dnsmasq.hook.query_all_txt_records")
+    def test_checks_multiple_domains(self, mock_query):
+        mock_query.side_effect = [
+            {"token-A"},  # example.com
+            {"token-B"},  # www.example.com
+        ]
+        challenges = {
+            "example.com": {"token-A"},
+            "www.example.com": {"token-B"},
+        }
+        result = verify_local_dns("203.0.113.1", challenges)
+        assert result is True
+        assert mock_query.call_count == 2
+
+    @patch("certbot_hook_dnsmasq.hook.query_all_txt_records")
+    def test_fails_if_any_domain_missing(self, mock_query):
+        mock_query.side_effect = [
+            {"token-A"},  # example.com OK
+            set(),        # www.example.com missing
+        ]
+        challenges = {
+            "example.com": {"token-A"},
+            "www.example.com": {"token-B"},
+        }
+        result = verify_local_dns("203.0.113.1", challenges)
         assert result is False
 
 
