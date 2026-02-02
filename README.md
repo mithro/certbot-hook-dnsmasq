@@ -4,16 +4,31 @@ Hook for certbot that allows using DNS-01 challenge authentication with a dnsmas
 
 ## Overview
 
-This script creates temporary TXT records in dnsmasq for ACME DNS-01 challenges, allowing certbot to obtain wildcard certificates or certificates for servers that aren't publicly accessible via HTTP.
+This tool creates temporary TXT records in dnsmasq for ACME DNS-01 challenges, allowing certbot to obtain wildcard certificates or certificates for servers that aren't publicly accessible via HTTP.
 
 ## Requirements
 
+- Python 3.11+
 - dnsmasq configured as a DNS server
 - `dig` command (from `dnsutils` or `bind-utils`)
 - `ldns-notify` (from `ldnsutils`) for notifying secondary DNS servers
-- systemd (for restarting dnsmasq)
+- systemd (for restarting dnsmasq via `systemctl`)
+
+## Installation
+
+```bash
+pip install .
+```
+
+Or with [uv](https://docs.astral.sh/uv/):
+
+```bash
+uv pip install .
+```
 
 ## Usage
+
+### Auth Hook (certbot DNS-01 challenge)
 
 Use as a certbot manual auth hook:
 
@@ -21,26 +36,44 @@ Use as a certbot manual auth hook:
 certbot certonly \
     --manual \
     --preferred-challenges dns \
-    --manual-auth-hook /path/to/dnsmasq-hook.sh \
+    --manual-auth-hook "certbot-hook-dnsmasq auth-hook" \
     -d example.com
+```
+
+### Flatten Config (debugging tool)
+
+Flatten a dnsmasq config by following all includes, useful for debugging:
+
+```bash
+certbot-hook-dnsmasq flatten-config [/etc/dnsmasq.conf]
 ```
 
 ## How it works
 
-1. Creates a dnsmasq config file with the ACME challenge TXT record
-2. Validates the dnsmasq configuration
-3. Restarts dnsmasq to load the new record
-4. Verifies the local DNS server has the correct record
-5. Sends NOTIFY to secondary DNS servers to trigger zone transfer
-6. Waits for secondary servers to sync (up to 120 seconds)
+1. Flattens the dnsmasq config and auto-discovers auth-server zone, secondary servers, and public IP
+2. Creates a dnsmasq config file with the ACME challenge TXT record
+3. Validates the dnsmasq configuration (`dnsmasq --test`)
+4. Restarts dnsmasq to load the new record
+5. Verifies the local DNS server has the correct record
+6. Sends NOTIFY to secondary DNS servers to trigger zone transfer
+7. Waits for secondary servers to sync (up to 120 seconds)
 
 ## Configuration
 
-The script is currently configured for a specific DNS setup. You may need to modify:
+The auth-hook auto-discovers your DNS setup from the dnsmasq config (auth-server, auth-sec-servers, listen-address). You can override defaults via CLI flags or environment variables:
 
-- The IP address used for NOTIFY (`-I` flag in `ldns-notify`)
-- The zone name (`-z` flag)
-- The secondary DNS server hostnames
+| CLI Flag | Environment Variable | Default |
+|---|---|---|
+| `--conf-dir` | `DNSMASQ_CONF_DIR` | `/etc/dnsmasq.d` |
+| `--conf` | `DNSMASQ_CONF` | `/etc/dnsmasq.conf` |
+| `--service` | `DNSMASQ_SERVICE` | `dnsmasq` |
+
+CLI flags take priority over environment variables, which take priority over defaults.
+
+Certbot sets the following environment variables automatically:
+
+- `CERTBOT_DOMAIN` -- the domain being validated
+- `CERTBOT_VALIDATION` -- the ACME challenge token value
 
 ## License
 
