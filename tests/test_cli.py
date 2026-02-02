@@ -6,10 +6,18 @@ from unittest.mock import patch
 
 import pytest
 
+from certbot_hook_dnsmasq import __version__
 from certbot_hook_dnsmasq.cli import main, build_parser
 
 
 class TestBuildParser:
+    def test_version_flag(self, capsys):
+        parser = build_parser()
+        with pytest.raises(SystemExit) as exc_info:
+            parser.parse_args(["--version"])
+        assert exc_info.value.code == 0
+        assert __version__ in capsys.readouterr().out
+
     def test_auth_hook_subcommand(self):
         parser = build_parser()
         args = parser.parse_args(["auth-hook"])
@@ -76,6 +84,16 @@ class TestMainAuthHook:
                 result = main()
         assert result == 1
         assert "CERTBOT_DOMAIN" in capsys.readouterr().err
+
+    def test_fails_without_certbot_validation(self, capsys):
+        env_with_domain_only = {k: v for k, v in os.environ.items()
+                                if k not in ("CERTBOT_DOMAIN", "CERTBOT_VALIDATION")}
+        env_with_domain_only["CERTBOT_DOMAIN"] = "example.com"
+        with patch.dict(os.environ, env_with_domain_only, clear=True):
+            with patch("sys.argv", ["certbot-hook-dnsmasq", "auth-hook"]):
+                result = main()
+        assert result == 1
+        assert "CERTBOT_VALIDATION" in capsys.readouterr().err
 
     @patch("certbot_hook_dnsmasq.cli.run_auth_hook")
     def test_cli_flags_override_env(self, mock_hook):

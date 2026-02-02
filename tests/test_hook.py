@@ -1,5 +1,6 @@
 """Tests for certbot_hook_dnsmasq.hook"""
 
+import subprocess
 from pathlib import Path
 from unittest.mock import patch, call
 
@@ -185,6 +186,99 @@ class TestRunAuthHook:
             domain="example.com",
             validation="test-token",
         )
+        assert result == 1
+
+    @patch("certbot_hook_dnsmasq.hook.extract_config_values")
+    @patch("certbot_hook_dnsmasq.hook.flatten_config")
+    def test_exits_on_missing_sec_servers(self, mock_flatten, mock_extract, tmp_path):
+        mock_flatten.return_value = ["auth-server=example.com"]
+        mock_extract.return_value = DnsmasqConfigValues(
+            auth_zone="example.com",
+            auth_sec_servers=[],
+            public_ipv4="203.0.113.1",
+        )
+
+        result = run_auth_hook(
+            conf_dir=tmp_path,
+            conf=Path("/etc/dnsmasq.conf"),
+            service="dnsmasq",
+            domain="example.com",
+            validation="test-token",
+        )
+        assert result == 1
+
+    @patch("certbot_hook_dnsmasq.hook.extract_config_values")
+    @patch("certbot_hook_dnsmasq.hook.flatten_config")
+    def test_exits_on_missing_public_ipv4(self, mock_flatten, mock_extract, tmp_path):
+        mock_flatten.return_value = ["auth-server=example.com"]
+        mock_extract.return_value = DnsmasqConfigValues(
+            auth_zone="example.com",
+            auth_sec_servers=["ns2.example.com"],
+            public_ipv4=None,
+        )
+
+        result = run_auth_hook(
+            conf_dir=tmp_path,
+            conf=Path("/etc/dnsmasq.conf"),
+            service="dnsmasq",
+            domain="example.com",
+            validation="test-token",
+        )
+        assert result == 1
+
+    @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
+    @patch("certbot_hook_dnsmasq.hook.extract_config_values")
+    @patch("certbot_hook_dnsmasq.hook.flatten_config")
+    def test_exits_on_dnsmasq_test_failure(
+        self, mock_flatten, mock_extract, mock_write, tmp_path,
+    ):
+        mock_flatten.return_value = ["auth-server=example.com"]
+        mock_extract.return_value = DnsmasqConfigValues(
+            auth_zone="example.com",
+            auth_sec_servers=["ns2.example.com"],
+            public_ipv4="203.0.113.1",
+        )
+        mock_write.return_value = tmp_path / "test.conf"
+
+        with patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test",
+                    side_effect=subprocess.CalledProcessError(1, ["dnsmasq", "--test"])):
+            result = run_auth_hook(
+                conf_dir=tmp_path,
+                conf=Path("/etc/dnsmasq.conf"),
+                service="dnsmasq",
+                domain="example.com",
+                validation="test-token",
+            )
+        assert result == 1
+
+    @patch("certbot_hook_dnsmasq.hook.verify_local_dns")
+    @patch("certbot_hook_dnsmasq.hook.run_systemctl")
+    @patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test")
+    @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
+    @patch("certbot_hook_dnsmasq.hook.extract_config_values")
+    @patch("certbot_hook_dnsmasq.hook.flatten_config")
+    def test_exits_on_ldns_notify_failure(
+        self, mock_flatten, mock_extract, mock_write, mock_test,
+        mock_systemctl, mock_verify, tmp_path,
+    ):
+        mock_flatten.return_value = ["auth-server=example.com"]
+        mock_extract.return_value = DnsmasqConfigValues(
+            auth_zone="example.com",
+            auth_sec_servers=["ns2.example.com"],
+            public_ipv4="203.0.113.1",
+        )
+        mock_write.return_value = tmp_path / "test.conf"
+        mock_verify.return_value = True
+
+        with patch("certbot_hook_dnsmasq.hook.run_ldns_notify",
+                    side_effect=subprocess.CalledProcessError(1, ["ldns-notify"])):
+            result = run_auth_hook(
+                conf_dir=tmp_path,
+                conf=Path("/etc/dnsmasq.conf"),
+                service="dnsmasq",
+                domain="example.com",
+                validation="test-token",
+            )
         assert result == 1
 
     @patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test")

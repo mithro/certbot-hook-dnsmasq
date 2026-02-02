@@ -30,6 +30,15 @@ class TestQueryTxtRecord:
         )
 
     @patch("certbot_hook_dnsmasq.external.subprocess.run")
+    def test_returns_first_line_on_multiline(self, mock_run):
+        mock_run.return_value = MagicMock(
+            stdout='"first-value"\n"second-value"\n',
+            returncode=0,
+        )
+        result = query_txt_record("8.8.8.8", "_acme-challenge.example.com")
+        assert result == "first-value"
+
+    @patch("certbot_hook_dnsmasq.external.subprocess.run")
     def test_returns_none_on_empty(self, mock_run):
         mock_run.return_value = MagicMock(stdout="\n", returncode=0)
         result = query_txt_record("8.8.8.8", "_acme-challenge.example.com")
