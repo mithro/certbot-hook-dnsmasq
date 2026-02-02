@@ -32,7 +32,7 @@ Python package (`certbot_hook_dnsmasq`) with two subcommands (`auth-hook` and `f
 - **`cli.py`** -- argparse entry point with `--version` flag. Config resolution order: CLI flags > environment variables > defaults. Uses typed `_resolve_path` / `_resolve_str` helpers.
 - **`flatten.py`** -- flattens dnsmasq config by recursively following `conf-file=` and `conf-dir=` includes (with cycle detection). `DnsmasqConfigValues` dataclass holds extracted values (auth-zone, auth-sec-servers, public IPv4 via `ipaddress.IPv4Address.is_global`).
 - **`hook.py`** -- auth-hook orchestration with two-phase execution: writes per-challenge config files (hash-based filenames), then on the final invocation restarts dnsmasq, verifies all TXT records locally and on secondaries, sends one NOTIFY, waits for propagation. All subprocess failures are caught and reported cleanly (no raw tracebacks).
-- **`external.py`** -- thin subprocess wrappers for `dig`, `ldns-notify`, `systemctl`, `dnsmasq --test`. Includes both `query_txt_record` (single value) and `query_all_txt_records` (full set). These are the only modules that call `subprocess.run`.
+- **`external.py`** -- thin subprocess wrappers for `dig` (`query_all_txt_records`), `ldns-notify`, `systemctl`, `dnsmasq --test`. This is the only module that calls `subprocess.run`.
 
 ### Auth-hook workflow (batch-aware)
 

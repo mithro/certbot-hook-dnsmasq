@@ -7,49 +7,10 @@ import pytest
 
 from certbot_hook_dnsmasq.external import (
     query_all_txt_records,
-    query_txt_record,
     run_dnsmasq_test,
     run_ldns_notify,
     run_systemctl,
 )
-
-
-class TestQueryTxtRecord:
-    @patch("certbot_hook_dnsmasq.external.subprocess.run")
-    def test_returns_txt_value(self, mock_run):
-        mock_run.return_value = MagicMock(
-            stdout='"test-validation-token"\n',
-            returncode=0,
-        )
-        result = query_txt_record("8.8.8.8", "_acme-challenge.example.com")
-        assert result == "test-validation-token"
-        mock_run.assert_called_once_with(
-            ["dig", "@8.8.8.8", "TXT", "_acme-challenge.example.com", "+short"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-
-    @patch("certbot_hook_dnsmasq.external.subprocess.run")
-    def test_returns_first_line_on_multiline(self, mock_run):
-        mock_run.return_value = MagicMock(
-            stdout='"first-value"\n"second-value"\n',
-            returncode=0,
-        )
-        result = query_txt_record("8.8.8.8", "_acme-challenge.example.com")
-        assert result == "first-value"
-
-    @patch("certbot_hook_dnsmasq.external.subprocess.run")
-    def test_returns_none_on_empty(self, mock_run):
-        mock_run.return_value = MagicMock(stdout="\n", returncode=0)
-        result = query_txt_record("8.8.8.8", "_acme-challenge.example.com")
-        assert result is None
-
-    @patch("certbot_hook_dnsmasq.external.subprocess.run")
-    def test_returns_none_on_failure(self, mock_run):
-        mock_run.return_value = MagicMock(stdout="", returncode=9)
-        result = query_txt_record("8.8.8.8", "_acme-challenge.example.com")
-        assert result is None
 
 
 class TestRunDnsmasqTest:

@@ -3,22 +3,6 @@
 import subprocess
 
 
-def query_txt_record(server: str, domain: str) -> str | None:
-    """Query a DNS server for a TXT record. Returns the value or None."""
-    result = subprocess.run(
-        ["dig", f"@{server}", "TXT", domain, "+short"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if result.returncode != 0:
-        return None
-    # Take only the first line (multiple TXT records possible)
-    first_line = result.stdout.strip().split('\n')[0]
-    value = first_line.strip('"')
-    return value if value else None
-
-
 def query_all_txt_records(server: str, domain: str) -> set[str]:
     """Query a DNS server for all TXT records at a name. Returns a set of values."""
     result = subprocess.run(

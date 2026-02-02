@@ -44,6 +44,8 @@ def read_pending_challenges(conf_dir: Path) -> dict[str, set[str]]:
     Returns a dict mapping domain -> set of validation tokens.
     """
     challenges: dict[str, set[str]] = {}
+    # Matches both legacy (dnsmasq.acme.{domain}.conf) and current
+    # (dnsmasq.acme.{domain}.{hash}.conf) filename formats.
     for path in conf_dir.glob("dnsmasq.acme.*.conf"):
         for line in path.read_text().splitlines():
             if line.startswith("txt-record=_acme-challenge."):

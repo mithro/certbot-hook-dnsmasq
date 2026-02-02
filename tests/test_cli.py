@@ -164,3 +164,18 @@ class TestMainAuthHook:
         assert result == 0
         call_kwargs = mock_hook.call_args[1]
         assert call_kwargs["remaining_challenges"] == 0
+
+    @patch("certbot_hook_dnsmasq.cli.run_auth_hook")
+    def test_invalid_remaining_challenges_defaults_to_zero(self, mock_hook):
+        mock_hook.return_value = 0
+        env = {
+            "CERTBOT_DOMAIN": "example.com",
+            "CERTBOT_VALIDATION": "test-token",
+            "CERTBOT_REMAINING_CHALLENGES": "not-a-number",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            with patch("sys.argv", ["certbot-hook-dnsmasq", "auth-hook"]):
+                result = main()
+        assert result == 0
+        call_kwargs = mock_hook.call_args[1]
+        assert call_kwargs["remaining_challenges"] == 0
