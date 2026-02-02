@@ -80,15 +80,26 @@ python -m certbot_hook_dnsmasq flatten-config
 
 ## How it works
 
-The `auth-hook` subcommand performs the following steps:
+The `auth-hook` subcommand uses two-phase execution for efficient multi-domain certificates:
 
-1. Flattens the dnsmasq config (recursively following all includes) and auto-discovers the auth-server zone, secondary servers, and public IP from `auth-server=`, `auth-sec-servers=`, and `listen-address=` directives
-2. Creates a dnsmasq config file with the ACME challenge TXT record and a CAA record for Let's Encrypt
+**Phase 1 -- Write only** (when more challenges are coming):
+- Creates a dnsmasq config file with the ACME challenge TXT record and a CAA record for Let's Encrypt
+- Returns immediately so certbot can send the next challenge
+
+**Phase 2 -- Write + finalize** (on the last challenge):
+1. Writes the final challenge config file
+2. Flattens the dnsmasq config (recursively following all includes) and auto-discovers the auth-server zone, secondary servers, and public IP
 3. Validates the dnsmasq configuration (`dnsmasq --test`)
-4. Restarts dnsmasq to load the new record
-5. Verifies the local DNS server has the correct TXT record
-6. Sends DNS NOTIFY to secondary servers via `ldns-notify` to trigger zone transfers
-7. Polls secondary servers round-robin until they sync (up to 120 seconds)
+4. Restarts dnsmasq to load all new records
+5. Verifies ALL TXT records are present on the local DNS server
+6. Sends a single DNS NOTIFY to secondary servers via `ldns-notify`
+7. Polls secondary servers round-robin until all expected TXT records are present on all servers (up to 120 seconds)
+
+This means a certificate with 10 domains causes only one dnsmasq restart and one propagation wait, not 10.
+
+### Multi-domain and wildcard support
+
+When requesting both a domain and its wildcard (e.g. `-d example.com -d *.example.com`), certbot generates two challenges for `_acme-challenge.example.com` with different tokens. The hook handles this correctly by writing each challenge to a separate file (`dnsmasq.acme.{domain}.{hash}.conf`) and verifying that all expected tokens are present during the finalize phase.
 
 ## Configuration
 
@@ -106,6 +117,7 @@ Certbot sets the following environment variables automatically:
 
 - `CERTBOT_DOMAIN` -- the domain being validated
 - `CERTBOT_VALIDATION` -- the ACME challenge token value
+- `CERTBOT_REMAINING_CHALLENGES` -- number of challenges remaining after this one (used for batching; available since certbot 1.4.0)
 
 ### What gets auto-discovered
 

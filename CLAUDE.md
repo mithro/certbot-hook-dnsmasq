@@ -31,17 +31,25 @@ Python package (`certbot_hook_dnsmasq`) with two subcommands (`auth-hook` and `f
 
 - **`cli.py`** -- argparse entry point with `--version` flag. Config resolution order: CLI flags > environment variables > defaults. Uses typed `_resolve_path` / `_resolve_str` helpers.
 - **`flatten.py`** -- flattens dnsmasq config by recursively following `conf-file=` and `conf-dir=` includes (with cycle detection). `DnsmasqConfigValues` dataclass holds extracted values (auth-zone, auth-sec-servers, public IPv4 via `ipaddress.IPv4Address.is_global`).
-- **`hook.py`** -- auth-hook orchestration: writes ACME challenge TXT + CAA records, restarts dnsmasq, verifies local DNS, notifies secondaries, polls secondaries round-robin until synced. All subprocess failures are caught and reported cleanly (no raw tracebacks).
-- **`external.py`** -- thin subprocess wrappers for `dig`, `ldns-notify`, `systemctl`, `dnsmasq --test`. These are the only modules that call `subprocess.run`.
+- **`hook.py`** -- auth-hook orchestration with two-phase execution: writes per-challenge config files (hash-based filenames), then on the final invocation restarts dnsmasq, verifies all TXT records locally and on secondaries, sends one NOTIFY, waits for propagation. All subprocess failures are caught and reported cleanly (no raw tracebacks).
+- **`external.py`** -- thin subprocess wrappers for `dig`, `ldns-notify`, `systemctl`, `dnsmasq --test`. Includes both `query_txt_record` (single value) and `query_all_txt_records` (full set). These are the only modules that call `subprocess.run`.
 
-### Auth-hook workflow
+### Auth-hook workflow (batch-aware)
 
+The hook uses `CERTBOT_REMAINING_CHALLENGES` for two-phase execution:
+
+**Phase 1 (remaining > 0):** Write config file only, return immediately.
+
+**Phase 2 (remaining == 0):** Write config file, then finalize:
 1. Flattens dnsmasq config and extracts auth-server zone, secondary servers, and public IP
-2. Writes `<conf-dir>/dnsmasq.acme.<domain>.conf` with TXT and CAA records
-3. Validates config (`dnsmasq --test`) and restarts dnsmasq via systemd
-4. Verifies local DNS has the correct TXT record
-5. Sends DNS NOTIFY to secondary servers via `ldns-notify`
-6. Polls secondaries round-robin until they sync (max 120s, configurable)
+2. Validates config (`dnsmasq --test`) and restarts dnsmasq via systemd
+3. Scans `conf_dir` for all `dnsmasq.acme.*.conf` files to discover pending challenges
+4. Verifies ALL TXT records on local DNS (grouped by domain, subset check)
+5. Sends a single DNS NOTIFY to secondary servers via `ldns-notify`
+6. Polls secondaries round-robin until all expected TXT records are present (max 120s)
+7. Returns 1 (failure) if secondaries do not sync within the timeout
+
+Config files use hash-based naming: `dnsmasq.acme.{domain}.{sha256(token)[:8]}.conf`. This ensures wildcard + base domain challenges (same domain, different tokens) get separate files.
 
 ## Development
 
@@ -89,6 +97,7 @@ Auth-hook options (CLI flags override environment variables, which override defa
 
 - `CERTBOT_DOMAIN` -- Domain being validated (required for `auth-hook`)
 - `CERTBOT_VALIDATION` -- ACME challenge token value (required for `auth-hook`)
+- `CERTBOT_REMAINING_CHALLENGES` -- Number of challenges remaining after this one (0 = last). Used for batch mode: when > 0, the hook writes the config file and returns immediately. When 0 or missing, the hook finalizes (restart, verify, notify, wait). Available since certbot 1.4.0.
 
 ### Auto-discovered from dnsmasq config
 

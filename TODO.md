@@ -34,10 +34,11 @@ Plan to replace these with Python-native implementations:
 
 ## Optimisations
 
-- [ ] **Batch multiple DNS records**: Allow the hook to process multiple ACME challenge
-  records at once (e.g. when certbot is validating multiple domains in a single run),
-  writing all TXT records before doing a single dnsmasq restart and NOTIFY cycle
-  instead of restarting per-domain.
+- [x] **Batch multiple DNS records**: Two-phase execution using
+  `CERTBOT_REMAINING_CHALLENGES`. Each invocation writes a per-challenge config file
+  (`dnsmasq.acme.{domain}.{hash}.conf`). The final invocation restarts dnsmasq once,
+  verifies all TXT records, sends one NOTIFY, and waits for all secondaries to sync.
+  Supports wildcard + base domain (multiple tokens for the same domain).
 
 - [ ] **Skip update if identical**: Before writing the ACME challenge config, check if
   the existing config file already has identical content. If so, skip the write,
