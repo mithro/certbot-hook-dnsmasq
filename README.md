@@ -1,5 +1,7 @@
 # certbot-hook-dnsmasq
 
+> **Warning:** This project has been vibe coded using [Claude Code](https://claude.ai/claude-code). Review carefully before using in production.
+
 Certbot hook for DNS-01 challenge authentication using a dnsmasq server.
 
 ## Overview
