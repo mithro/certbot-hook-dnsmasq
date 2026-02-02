@@ -131,3 +131,36 @@ class TestMainAuthHook:
         assert call_kwargs["conf_dir"] == Path("/env/dir")
         assert call_kwargs["conf"] == Path("/env/dnsmasq.conf")
         assert call_kwargs["service"] == "dnsmasq-env"
+
+    @patch("certbot_hook_dnsmasq.cli.run_auth_hook")
+    def test_passes_remaining_challenges(self, mock_hook):
+        mock_hook.return_value = 0
+        env = {
+            "CERTBOT_DOMAIN": "example.com",
+            "CERTBOT_VALIDATION": "test-token",
+            "CERTBOT_REMAINING_CHALLENGES": "3",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            with patch("sys.argv", ["certbot-hook-dnsmasq", "auth-hook"]):
+                result = main()
+        assert result == 0
+        call_kwargs = mock_hook.call_args[1]
+        assert call_kwargs["remaining_challenges"] == 3
+
+    @patch("certbot_hook_dnsmasq.cli.run_auth_hook")
+    def test_defaults_remaining_challenges_to_zero(self, mock_hook):
+        mock_hook.return_value = 0
+        env = {
+            "CERTBOT_DOMAIN": "example.com",
+            "CERTBOT_VALIDATION": "test-token",
+        }
+        # Ensure CERTBOT_REMAINING_CHALLENGES is NOT set
+        env_clean = {k: v for k, v in os.environ.items()
+                     if k != "CERTBOT_REMAINING_CHALLENGES"}
+        env_clean.update(env)
+        with patch.dict(os.environ, env_clean, clear=True):
+            with patch("sys.argv", ["certbot-hook-dnsmasq", "auth-hook"]):
+                result = main()
+        assert result == 0
+        call_kwargs = mock_hook.call_args[1]
+        assert call_kwargs["remaining_challenges"] == 0

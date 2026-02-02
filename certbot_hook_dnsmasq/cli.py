@@ -102,6 +102,12 @@ def main() -> int:
             print("ERROR: CERTBOT_VALIDATION environment variable not set", file=sys.stderr)
             return 1
 
+        remaining_str = os.environ.get("CERTBOT_REMAINING_CHALLENGES", "0")
+        try:
+            remaining_challenges = int(remaining_str)
+        except ValueError:
+            remaining_challenges = 0
+
         conf_dir = _resolve_path(args.conf_dir, "DNSMASQ_CONF_DIR", Path("/etc/dnsmasq.d"))
         conf = _resolve_path(args.conf, "DNSMASQ_CONF", Path("/etc/dnsmasq.conf"))
         service = _resolve_str(args.service, "DNSMASQ_SERVICE", "dnsmasq")
@@ -112,6 +118,7 @@ def main() -> int:
             service=service,
             domain=domain,
             validation=validation,
+            remaining_challenges=remaining_challenges,
         )
 
     return 1
