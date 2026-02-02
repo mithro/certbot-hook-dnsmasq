@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from certbot_hook_dnsmasq.flatten import (
+    extract_config_values,
     flatten_config,
     parse_config,
     parse_defaults,
@@ -205,3 +206,90 @@ class TestFlattenConfig:
 
         lines = flatten_config(main_conf, defaults_path=defaults)
         assert lines == ["auth-server=example.com", "server=8.8.8.8"]
+
+
+class TestExtractConfigValues:
+    def test_extracts_auth_zone(self):
+        lines = ["auth-server=example.com,ns1.example.com"]
+        values = extract_config_values(lines)
+        assert values.auth_zone == "example.com"
+
+    def test_auth_zone_last_wins(self):
+        lines = [
+            "auth-server=first.com",
+            "auth-server=second.com,ns1.second.com",
+        ]
+        values = extract_config_values(lines)
+        assert values.auth_zone == "second.com"
+
+    def test_auth_zone_without_comma(self):
+        lines = ["auth-server=example.com"]
+        values = extract_config_values(lines)
+        assert values.auth_zone == "example.com"
+
+    def test_extracts_auth_sec_servers(self):
+        lines = ["auth-sec-servers=ns2.example.com,ns3.example.com"]
+        values = extract_config_values(lines)
+        assert values.auth_sec_servers == ["ns2.example.com", "ns3.example.com"]
+
+    def test_multiple_auth_sec_servers_lines(self):
+        lines = [
+            "auth-sec-servers=ns2.example.com",
+            "auth-sec-servers=ns3.example.com",
+        ]
+        values = extract_config_values(lines)
+        assert values.auth_sec_servers == ["ns2.example.com", "ns3.example.com"]
+
+    def test_extracts_public_ipv4(self):
+        lines = [
+            "listen-address=127.0.0.1",
+            "listen-address=93.184.216.34",
+        ]
+        values = extract_config_values(lines)
+        assert values.public_ipv4 == "93.184.216.34"
+
+    def test_skips_private_ipv4(self):
+        lines = [
+            "listen-address=10.0.0.1",
+            "listen-address=172.16.0.1",
+            "listen-address=192.168.1.1",
+            "listen-address=93.184.216.34",
+        ]
+        values = extract_config_values(lines)
+        assert values.public_ipv4 == "93.184.216.34"
+
+    def test_skips_ipv6(self):
+        lines = [
+            "listen-address=::1",
+            "listen-address=93.184.216.34",
+        ]
+        values = extract_config_values(lines)
+        assert values.public_ipv4 == "93.184.216.34"
+
+    def test_missing_auth_zone_returns_none(self):
+        lines = ["listen-address=1.2.3.4"]
+        values = extract_config_values(lines)
+        assert values.auth_zone is None
+
+    def test_missing_sec_servers_returns_empty(self):
+        lines = ["auth-server=example.com"]
+        values = extract_config_values(lines)
+        assert values.auth_sec_servers == []
+
+    def test_missing_public_ipv4_returns_none(self):
+        lines = ["listen-address=127.0.0.1"]
+        values = extract_config_values(lines)
+        assert values.public_ipv4 is None
+
+    def test_full_config(self):
+        lines = [
+            "auth-server=example.com,ns1.example.com",
+            "auth-sec-servers=ns2.example.com,ns3.example.com",
+            "listen-address=127.0.0.1",
+            "listen-address=93.184.216.34",
+            "server=8.8.8.8",
+        ]
+        values = extract_config_values(lines)
+        assert values.auth_zone == "example.com"
+        assert values.auth_sec_servers == ["ns2.example.com", "ns3.example.com"]
+        assert values.public_ipv4 == "93.184.216.34"

@@ -1,6 +1,8 @@
 """Flatten dnsmasq config by following all includes."""
 
+import ipaddress
 import re
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
@@ -119,3 +121,51 @@ def flatten_config(
             lines.extend(parse_config(f, exclude_patterns, visited))
 
     return lines
+
+
+@dataclass
+class DnsmasqConfigValues:
+    """Values extracted from a flattened dnsmasq config."""
+    auth_zone: str | None = None
+    auth_sec_servers: list[str] = field(default_factory=list)
+    public_ipv4: str | None = None
+
+
+def _is_public_ipv4(addr_str: str) -> bool:
+    """Check if a string is a public (non-private, non-loopback) IPv4 address."""
+    try:
+        addr = ipaddress.IPv4Address(addr_str)
+    except (ipaddress.AddressValueError, ValueError):
+        return False
+    return addr.is_global
+
+
+def extract_config_values(lines: list[str]) -> DnsmasqConfigValues:
+    """Extract auth-server, auth-sec-servers, and public listen-address from config lines.
+
+    Replicates the grep/cut/sed extraction from the original bash script:
+    - auth-server: last value wins, take zone name before any comma
+    - auth-sec-servers: all values collected, comma-separated within each line
+    - listen-address: first public IPv4 address found
+    """
+    values = DnsmasqConfigValues()
+
+    for line in lines:
+        if line.startswith('auth-server='):
+            # Last wins; take zone name before any comma
+            raw = line.split('=', 1)[1]
+            values.auth_zone = raw.split(',')[0]
+
+        elif line.startswith('auth-sec-servers='):
+            raw = line.split('=', 1)[1]
+            values.auth_sec_servers.extend(
+                s.strip() for s in raw.split(',') if s.strip()
+            )
+
+        elif line.startswith('listen-address='):
+            if values.public_ipv4 is None:
+                addr = line.split('=', 1)[1]
+                if _is_public_ipv4(addr):
+                    values.public_ipv4 = addr
+
+    return values
