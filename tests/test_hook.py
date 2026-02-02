@@ -134,77 +134,90 @@ class TestVerifyLocalDns:
 
 class TestWaitForSync:
     @patch("certbot_hook_dnsmasq.hook.time.sleep")
-    @patch("certbot_hook_dnsmasq.hook.query_txt_record")
+    @patch("certbot_hook_dnsmasq.hook.query_all_txt_records")
     def test_returns_true_when_all_synced(self, mock_query, mock_sleep):
-        mock_query.return_value = "test-token"
-        responses = wait_for_sync(
+        mock_query.return_value = {"test-token"}
+        challenges = {"example.com": {"test-token"}}
+        synced = wait_for_sync(
             ["ns2.example.com", "ns3.example.com"],
-            "example.com",
-            "test-token",
+            challenges,
             max_wait=120,
             interval=5,
         )
-        assert responses == {
-            "ns2.example.com": "test-token",
-            "ns3.example.com": "test-token",
-        }
-        # Should not sleep if synced on first check
+        assert synced is True
         mock_sleep.assert_not_called()
 
     @patch("certbot_hook_dnsmasq.hook.time.sleep")
-    @patch("certbot_hook_dnsmasq.hook.query_txt_record")
+    @patch("certbot_hook_dnsmasq.hook.query_all_txt_records")
     def test_polls_until_synced(self, mock_query, mock_sleep):
-        # First round: ns2 not synced, ns3 synced
-        # Second round: ns2 synced
+        # Round 1: ns2 has nothing for example.com, ns3 has it
+        # Round 2: ns2 now has it
         mock_query.side_effect = [
-            None, "test-token",       # round 1: ns2=None, ns3=token
-            "test-token",             # round 2: ns2=token (ns3 skipped)
+            set(), {"test-token"},       # round 1: ns2=empty, ns3=ok
+            {"test-token"},              # round 2: ns2=ok (ns3 skipped)
         ]
-        responses = wait_for_sync(
+        challenges = {"example.com": {"test-token"}}
+        synced = wait_for_sync(
             ["ns2.example.com", "ns3.example.com"],
-            "example.com",
-            "test-token",
+            challenges,
             max_wait=120,
             interval=5,
         )
-        assert responses == {
-            "ns2.example.com": "test-token",
-            "ns3.example.com": "test-token",
-        }
+        assert synced is True
         mock_sleep.assert_called_once_with(5)
 
     @patch("certbot_hook_dnsmasq.hook.time.sleep")
-    @patch("certbot_hook_dnsmasq.hook.query_txt_record")
-    def test_returns_partial_on_timeout(self, mock_query, mock_sleep):
-        mock_query.return_value = None
-        responses = wait_for_sync(
+    @patch("certbot_hook_dnsmasq.hook.query_all_txt_records")
+    def test_returns_false_on_timeout(self, mock_query, mock_sleep):
+        mock_query.return_value = set()
+        challenges = {"example.com": {"test-token"}}
+        synced = wait_for_sync(
             ["ns2.example.com"],
-            "example.com",
-            "test-token",
+            challenges,
             max_wait=10,
             interval=5,
         )
-        assert responses == {"ns2.example.com": None}
-        # Should have slept twice (0+5=5, 5+5=10, then timeout)
+        assert synced is False
         assert mock_sleep.call_count == 2
 
     @patch("certbot_hook_dnsmasq.hook.time.sleep")
-    @patch("certbot_hook_dnsmasq.hook.query_txt_record")
-    def test_tracks_actual_responses(self, mock_query, mock_sleep):
-        """Responses dict tracks the actual value from each server."""
+    @patch("certbot_hook_dnsmasq.hook.query_all_txt_records")
+    def test_multi_domain_multi_token(self, mock_query, mock_sleep):
+        """Two domains with two tokens each, all on one server."""
         mock_query.side_effect = [
-            "wrong-token", "test-token",  # round 1
-            "test-token",                 # round 2
+            {"token-A", "token-B"},  # ns2: example.com
+            {"token-C"},             # ns2: www.example.com
         ]
-        responses = wait_for_sync(
-            ["ns2.example.com", "ns3.example.com"],
-            "example.com",
-            "test-token",
+        challenges = {
+            "example.com": {"token-A", "token-B"},
+            "www.example.com": {"token-C"},
+        }
+        synced = wait_for_sync(
+            ["ns2.example.com"],
+            challenges,
             max_wait=120,
             interval=5,
         )
-        assert responses["ns2.example.com"] == "test-token"
-        assert responses["ns3.example.com"] == "test-token"
+        assert synced is True
+        mock_sleep.assert_not_called()
+
+    @patch("certbot_hook_dnsmasq.hook.time.sleep")
+    @patch("certbot_hook_dnsmasq.hook.query_all_txt_records")
+    def test_partial_token_set_not_synced(self, mock_query, mock_sleep):
+        """Server has one of two expected tokens -- not synced yet."""
+        mock_query.side_effect = [
+            {"token-A"},               # round 1: only 1 of 2
+            {"token-A", "token-B"},    # round 2: both present
+        ]
+        challenges = {"example.com": {"token-A", "token-B"}}
+        synced = wait_for_sync(
+            ["ns2.example.com"],
+            challenges,
+            max_wait=120,
+            interval=5,
+        )
+        assert synced is True
+        mock_sleep.assert_called_once_with(5)
 
 
 class TestRunAuthHook:

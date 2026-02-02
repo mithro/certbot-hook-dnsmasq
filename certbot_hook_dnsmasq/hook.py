@@ -79,39 +79,49 @@ def verify_local_dns(public_ipv4: str, challenges: dict[str, set[str]]) -> bool:
 
 def wait_for_sync(
     servers: list[str],
-    domain: str,
-    validation: str,
+    challenges: dict[str, set[str]],
     max_wait: int = 120,
     interval: int = 5,
-) -> dict[str, str | None]:
-    """Poll secondary DNS servers until they have the correct TXT record.
+) -> bool:
+    """Poll secondary DNS servers until they have all expected TXT records.
 
-    Returns a dict mapping server -> last observed TXT value.
+    challenges is a dict mapping domain -> set of expected validation tokens.
+    Returns True if all servers synced, False on timeout.
     """
-    record = f"_acme-challenge.{domain}"
-    responses: dict[str, str | None] = {}
+    # Track which (server, domain) pairs are synced
+    synced_pairs: set[tuple[str, str]] = set()
+    all_pairs = {
+        (server, domain)
+        for server in servers
+        for domain in challenges
+    }
     elapsed = 0
 
     while True:
         for server in servers:
-            if responses.get(server) == validation:
-                continue
-            responses[server] = query_txt_record(server, record)
+            for domain in sorted(challenges):
+                if (server, domain) in synced_pairs:
+                    continue
+                record = f"_acme-challenge.{domain}"
+                actual = query_all_txt_records(server, record)
+                expected = challenges[domain]
+                if expected <= actual:
+                    synced_pairs.add((server, domain))
+                    print(f"  {server}: {domain} synced")
+                else:
+                    missing = expected - actual
+                    print(f"  {server}: {domain} waiting (missing {len(missing)} record(s))")
 
-        # Log current state
-        for server in servers:
-            value = responses.get(server)
-            status = "synced" if value == validation else "waiting"
-            print(f"  {server}: {value!r} ({status})")
-
-        if all(responses.get(s) == validation for s in servers):
+        if synced_pairs == all_pairs:
             print("All secondaries synced!")
-            return responses
+            return True
 
         elapsed += interval
         if elapsed > max_wait:
-            print(f"WARNING: Secondaries may not have synced within {max_wait}s")
-            return responses
+            print(f"ERROR: Secondaries did not sync within {max_wait}s", file=sys.stderr)
+            for server, domain in sorted(all_pairs - synced_pairs):
+                print(f"  {server}: {domain} NOT synced", file=sys.stderr)
+            return False
 
         time.sleep(interval)
 
