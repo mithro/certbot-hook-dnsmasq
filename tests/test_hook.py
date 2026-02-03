@@ -8,7 +8,7 @@ from unittest.mock import patch, call
 import pytest
 
 from certbot_hook_dnsmasq.flatten import DnsmasqConfigValues
-from certbot_hook_dnsmasq.hook import run_auth_hook, write_acme_challenge, verify_local_dns, wait_for_sync, read_pending_challenges, remove_acme_challenge
+from certbot_hook_dnsmasq.hook import run_auth_hook, run_cleanup_hook, write_acme_challenge, verify_local_dns, wait_for_sync, read_pending_challenges, remove_acme_challenge
 
 
 class TestWriteAcmeChallenge:
@@ -528,4 +528,115 @@ class TestRunAuthHook:
             validation="test-token",
             remaining_challenges=0,
         )
+        assert result == 1
+
+
+class TestRunCleanupHook:
+    @patch("certbot_hook_dnsmasq.hook.run_systemctl")
+    @patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test")
+    @patch("certbot_hook_dnsmasq.hook.remove_acme_challenge")
+    def test_full_flow_remaining_zero(
+        self, mock_remove, mock_test, mock_systemctl, tmp_path,
+    ):
+        mock_remove.return_value = tmp_path / "dnsmasq.acme.example.com.abcd1234.conf"
+
+        result = run_cleanup_hook(
+            conf_dir=tmp_path,
+            conf=Path("/etc/dnsmasq.conf"),
+            service="dnsmasq",
+            domain="example.com",
+            validation="test-token",
+            remaining_challenges=0,
+        )
+
+        assert result == 0
+        mock_remove.assert_called_once_with(tmp_path, "example.com", "test-token")
+        mock_test.assert_called_once_with(str(Path("/etc/dnsmasq.conf")))
+        assert mock_systemctl.call_count == 2  # restart + status
+        mock_systemctl.assert_any_call("restart", "dnsmasq")
+        mock_systemctl.assert_any_call("status", "dnsmasq")
+
+    @patch("certbot_hook_dnsmasq.hook.remove_acme_challenge")
+    def test_remove_only_when_remaining_positive(self, mock_remove, tmp_path):
+        mock_remove.return_value = tmp_path / "test.conf"
+
+        result = run_cleanup_hook(
+            conf_dir=tmp_path,
+            conf=Path("/etc/dnsmasq.conf"),
+            service="dnsmasq",
+            domain="example.com",
+            validation="test-token",
+            remaining_challenges=2,
+        )
+
+        assert result == 0
+        mock_remove.assert_called_once_with(tmp_path, "example.com", "test-token")
+
+    @patch("certbot_hook_dnsmasq.hook.remove_acme_challenge")
+    def test_no_restart_when_remaining_positive(self, mock_remove, tmp_path):
+        mock_remove.return_value = tmp_path / "test.conf"
+
+        with patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test") as mock_test:
+            result = run_cleanup_hook(
+                conf_dir=tmp_path,
+                conf=Path("/etc/dnsmasq.conf"),
+                service="dnsmasq",
+                domain="example.com",
+                validation="test-token",
+                remaining_challenges=3,
+            )
+
+        assert result == 0
+        mock_test.assert_not_called()
+
+    @patch("certbot_hook_dnsmasq.hook.remove_acme_challenge")
+    def test_succeeds_when_file_already_missing(self, mock_remove, tmp_path):
+        mock_remove.return_value = None  # file didn't exist
+
+        with patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test"):
+            with patch("certbot_hook_dnsmasq.hook.run_systemctl"):
+                result = run_cleanup_hook(
+                    conf_dir=tmp_path,
+                    conf=Path("/etc/dnsmasq.conf"),
+                    service="dnsmasq",
+                    domain="example.com",
+                    validation="test-token",
+                    remaining_challenges=0,
+                )
+
+        assert result == 0
+
+    @patch("certbot_hook_dnsmasq.hook.remove_acme_challenge")
+    def test_exits_on_dnsmasq_test_failure(self, mock_remove, tmp_path):
+        mock_remove.return_value = tmp_path / "test.conf"
+
+        with patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test",
+                    side_effect=subprocess.CalledProcessError(1, ["dnsmasq", "--test"])):
+            result = run_cleanup_hook(
+                conf_dir=tmp_path,
+                conf=Path("/etc/dnsmasq.conf"),
+                service="dnsmasq",
+                domain="example.com",
+                validation="test-token",
+                remaining_challenges=0,
+            )
+
+        assert result == 1
+
+    @patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test")
+    @patch("certbot_hook_dnsmasq.hook.remove_acme_challenge")
+    def test_exits_on_restart_failure(self, mock_remove, mock_test, tmp_path):
+        mock_remove.return_value = tmp_path / "test.conf"
+
+        with patch("certbot_hook_dnsmasq.hook.run_systemctl",
+                    side_effect=subprocess.CalledProcessError(1, ["systemctl", "restart"])):
+            result = run_cleanup_hook(
+                conf_dir=tmp_path,
+                conf=Path("/etc/dnsmasq.conf"),
+                service="dnsmasq",
+                domain="example.com",
+                validation="test-token",
+                remaining_challenges=0,
+            )
+
         assert result == 1

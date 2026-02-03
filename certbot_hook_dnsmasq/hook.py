@@ -212,3 +212,40 @@ def run_auth_hook(
         return 1
 
     return 0
+
+
+def run_cleanup_hook(
+    conf_dir: Path,
+    conf: Path,
+    service: str,
+    domain: str,
+    validation: str,
+    remaining_challenges: int = 0,
+) -> int:
+    """Run the cleanup-hook workflow. Returns 0 on success, 1 on failure.
+
+    When remaining_challenges > 0, only removes the config file and returns.
+    When remaining_challenges == 0, removes the config file then finalizes:
+    test config and restart dnsmasq.
+    """
+    # Always remove the config file for this challenge
+    removed = remove_acme_challenge(conf_dir, domain, validation)
+    if removed:
+        print(f"Removed ACME challenge config: {removed.name}")
+    else:
+        print(f"ACME challenge config for {domain} not found (already cleaned up)")
+
+    if remaining_challenges > 0:
+        print(f"  {remaining_challenges} challenge(s) remaining, deferring restart")
+        return 0
+
+    # Final invocation: test and restart dnsmasq
+    try:
+        run_dnsmasq_test(str(conf))
+        run_systemctl("restart", service)
+        run_systemctl("status", service)
+    except subprocess.CalledProcessError as e:
+        print(f"ERROR: Command failed: {e.cmd}", file=sys.stderr)
+        return 1
+
+    return 0
