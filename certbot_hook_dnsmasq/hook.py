@@ -38,6 +38,20 @@ def write_acme_challenge(conf_dir: Path, domain: str, validation: str) -> Path:
     return config_file
 
 
+def remove_acme_challenge(conf_dir: Path, domain: str, validation: str) -> Path | None:
+    """Remove dnsmasq config file for an ACME challenge.
+
+    Uses the same hash-based filename as write_acme_challenge().
+    Returns the path removed, or None if the file did not exist.
+    """
+    token_hash = hashlib.sha256(validation.encode()).hexdigest()[:8]
+    config_file = conf_dir / f"dnsmasq.acme.{domain}.{token_hash}.conf"
+    if config_file.exists():
+        config_file.unlink()
+        return config_file
+    return None
+
+
 def read_pending_challenges(conf_dir: Path) -> dict[str, set[str]]:
     """Scan conf_dir for ACME challenge config files and extract (domain, token) pairs.
 

@@ -8,7 +8,7 @@ from unittest.mock import patch, call
 import pytest
 
 from certbot_hook_dnsmasq.flatten import DnsmasqConfigValues
-from certbot_hook_dnsmasq.hook import run_auth_hook, write_acme_challenge, verify_local_dns, wait_for_sync, read_pending_challenges
+from certbot_hook_dnsmasq.hook import run_auth_hook, write_acme_challenge, verify_local_dns, wait_for_sync, read_pending_challenges, remove_acme_challenge
 
 
 class TestWriteAcmeChallenge:
@@ -39,6 +39,29 @@ class TestWriteAcmeChallenge:
         # Only one file for this token
         matching = list(tmp_path.glob("dnsmasq.acme.example.com.*.conf"))
         assert len(matching) == 1
+
+
+class TestRemoveAcmeChallenge:
+    def test_removes_config_file(self, tmp_path):
+        path = write_acme_challenge(tmp_path, "example.com", "test-token-123")
+        assert path.exists()
+
+        removed = remove_acme_challenge(tmp_path, "example.com", "test-token-123")
+        assert removed == path
+        assert not path.exists()
+
+    def test_returns_none_when_file_missing(self, tmp_path):
+        removed = remove_acme_challenge(tmp_path, "example.com", "no-such-token")
+        assert removed is None
+
+    def test_removes_only_matching_file(self, tmp_path):
+        path_a = write_acme_challenge(tmp_path, "example.com", "token-A")
+        path_b = write_acme_challenge(tmp_path, "example.com", "token-B")
+
+        removed = remove_acme_challenge(tmp_path, "example.com", "token-A")
+        assert removed == path_a
+        assert not path_a.exists()
+        assert path_b.exists()
 
 
 class TestReadPendingChallenges:
