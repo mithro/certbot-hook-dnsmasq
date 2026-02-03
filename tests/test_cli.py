@@ -46,6 +46,23 @@ class TestBuildParser:
         assert args.conf == Path("/custom/dnsmasq.conf")
         assert args.service == "dnsmasq-custom"
 
+    def test_cleanup_hook_subcommand(self):
+        parser = build_parser()
+        args = parser.parse_args(["cleanup-hook"])
+        assert args.subcommand == "cleanup-hook"
+
+    def test_cleanup_hook_flags(self):
+        parser = build_parser()
+        args = parser.parse_args([
+            "cleanup-hook",
+            "--conf-dir", "/custom/dir",
+            "--conf", "/custom/dnsmasq.conf",
+            "--service", "dnsmasq-custom",
+        ])
+        assert args.conf_dir == Path("/custom/dir")
+        assert args.conf == Path("/custom/dnsmasq.conf")
+        assert args.service == "dnsmasq-custom"
+
 
 class TestMainFlattenConfig:
     @patch("certbot_hook_dnsmasq.cli.flatten_config")
@@ -175,6 +192,93 @@ class TestMainAuthHook:
         }
         with patch.dict(os.environ, env, clear=False):
             with patch("sys.argv", ["certbot-hook-dnsmasq", "auth-hook"]):
+                result = main()
+        assert result == 0
+        call_kwargs = mock_hook.call_args[1]
+        assert call_kwargs["remaining_challenges"] == 0
+
+
+class TestMainCleanupHook:
+    @patch("certbot_hook_dnsmasq.cli.run_cleanup_hook")
+    def test_reads_certbot_env_vars(self, mock_hook):
+        mock_hook.return_value = 0
+        env = {
+            "CERTBOT_DOMAIN": "example.com",
+            "CERTBOT_VALIDATION": "test-token",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            with patch("sys.argv", ["certbot-hook-dnsmasq", "cleanup-hook"]):
+                result = main()
+        assert result == 0
+        mock_hook.assert_called_once()
+        call_kwargs = mock_hook.call_args[1]
+        assert call_kwargs["domain"] == "example.com"
+        assert call_kwargs["validation"] == "test-token"
+
+    def test_fails_without_certbot_domain(self, capsys):
+        env_without = {k: v for k, v in os.environ.items()
+                       if k not in ("CERTBOT_DOMAIN", "CERTBOT_VALIDATION")}
+        with patch.dict(os.environ, env_without, clear=True):
+            with patch("sys.argv", ["certbot-hook-dnsmasq", "cleanup-hook"]):
+                result = main()
+        assert result == 1
+        assert "CERTBOT_DOMAIN" in capsys.readouterr().err
+
+    def test_fails_without_certbot_validation(self, capsys):
+        env_with_domain_only = {k: v for k, v in os.environ.items()
+                                if k not in ("CERTBOT_DOMAIN", "CERTBOT_VALIDATION")}
+        env_with_domain_only["CERTBOT_DOMAIN"] = "example.com"
+        with patch.dict(os.environ, env_with_domain_only, clear=True):
+            with patch("sys.argv", ["certbot-hook-dnsmasq", "cleanup-hook"]):
+                result = main()
+        assert result == 1
+        assert "CERTBOT_VALIDATION" in capsys.readouterr().err
+
+    @patch("certbot_hook_dnsmasq.cli.run_cleanup_hook")
+    def test_cli_flags_override_env(self, mock_hook):
+        mock_hook.return_value = 0
+        env = {
+            "CERTBOT_DOMAIN": "example.com",
+            "CERTBOT_VALIDATION": "test-token",
+            "DNSMASQ_CONF_DIR": "/env/dir",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            with patch("sys.argv", [
+                "certbot-hook-dnsmasq", "cleanup-hook",
+                "--conf-dir", "/cli/dir",
+            ]):
+                result = main()
+        assert result == 0
+        call_kwargs = mock_hook.call_args[1]
+        assert call_kwargs["conf_dir"] == Path("/cli/dir")
+
+    @patch("certbot_hook_dnsmasq.cli.run_cleanup_hook")
+    def test_passes_remaining_challenges(self, mock_hook):
+        mock_hook.return_value = 0
+        env = {
+            "CERTBOT_DOMAIN": "example.com",
+            "CERTBOT_VALIDATION": "test-token",
+            "CERTBOT_REMAINING_CHALLENGES": "3",
+        }
+        with patch.dict(os.environ, env, clear=False):
+            with patch("sys.argv", ["certbot-hook-dnsmasq", "cleanup-hook"]):
+                result = main()
+        assert result == 0
+        call_kwargs = mock_hook.call_args[1]
+        assert call_kwargs["remaining_challenges"] == 3
+
+    @patch("certbot_hook_dnsmasq.cli.run_cleanup_hook")
+    def test_defaults_remaining_challenges_to_zero(self, mock_hook):
+        mock_hook.return_value = 0
+        env = {
+            "CERTBOT_DOMAIN": "example.com",
+            "CERTBOT_VALIDATION": "test-token",
+        }
+        env_clean = {k: v for k, v in os.environ.items()
+                     if k != "CERTBOT_REMAINING_CHALLENGES"}
+        env_clean.update(env)
+        with patch.dict(os.environ, env_clean, clear=True):
+            with patch("sys.argv", ["certbot-hook-dnsmasq", "cleanup-hook"]):
                 result = main()
         assert result == 0
         call_kwargs = mock_hook.call_args[1]

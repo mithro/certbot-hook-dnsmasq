@@ -7,7 +7,7 @@ from pathlib import Path
 
 from certbot_hook_dnsmasq import __version__
 from certbot_hook_dnsmasq.flatten import flatten_config
-from certbot_hook_dnsmasq.hook import run_auth_hook
+from certbot_hook_dnsmasq.hook import run_auth_hook, run_cleanup_hook
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,6 +39,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="dnsmasq config file (default: /etc/dnsmasq.conf, env: DNSMASQ_CONF)",
     )
     auth.add_argument(
+        "--service",
+        default=None,
+        help="systemd service name (default: dnsmasq, env: DNSMASQ_SERVICE)",
+    )
+
+    # cleanup-hook subcommand
+    cleanup = subparsers.add_parser(
+        "cleanup-hook",
+        help="Certbot manual cleanup hook for DNS-01 challenges",
+    )
+    cleanup.add_argument(
+        "--conf-dir",
+        type=Path,
+        default=None,
+        help="Directory for dnsmasq ACME configs (default: /etc/dnsmasq.d, env: DNSMASQ_CONF_DIR)",
+    )
+    cleanup.add_argument(
+        "--conf",
+        type=Path,
+        default=None,
+        help="dnsmasq config file (default: /etc/dnsmasq.conf, env: DNSMASQ_CONF)",
+    )
+    cleanup.add_argument(
         "--service",
         default=None,
         help="systemd service name (default: dnsmasq, env: DNSMASQ_SERVICE)",
@@ -113,6 +136,36 @@ def main() -> int:
         service = _resolve_str(args.service, "DNSMASQ_SERVICE", "dnsmasq")
 
         return run_auth_hook(
+            conf_dir=conf_dir,
+            conf=conf,
+            service=service,
+            domain=domain,
+            validation=validation,
+            remaining_challenges=remaining_challenges,
+        )
+
+    if args.subcommand == "cleanup-hook":
+        domain = os.environ.get("CERTBOT_DOMAIN")
+        validation = os.environ.get("CERTBOT_VALIDATION")
+
+        if not domain:
+            print("ERROR: CERTBOT_DOMAIN environment variable not set", file=sys.stderr)
+            return 1
+        if not validation:
+            print("ERROR: CERTBOT_VALIDATION environment variable not set", file=sys.stderr)
+            return 1
+
+        remaining_str = os.environ.get("CERTBOT_REMAINING_CHALLENGES", "0")
+        try:
+            remaining_challenges = int(remaining_str)
+        except ValueError:
+            remaining_challenges = 0
+
+        conf_dir = _resolve_path(args.conf_dir, "DNSMASQ_CONF_DIR", Path("/etc/dnsmasq.d"))
+        conf = _resolve_path(args.conf, "DNSMASQ_CONF", Path("/etc/dnsmasq.conf"))
+        service = _resolve_str(args.service, "DNSMASQ_SERVICE", "dnsmasq")
+
+        return run_cleanup_hook(
             conf_dir=conf_dir,
             conf=conf,
             service=service,
