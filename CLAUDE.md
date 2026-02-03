@@ -22,7 +22,6 @@ tests/
     test_hook.py             # Auth-hook and cleanup-hook workflow and helpers
     test_external.py         # Subprocess wrapper behaviour
 pyproject.toml               # Package metadata and build config
-TODO.md                      # Planned future work
 ```
 
 ## Architecture
