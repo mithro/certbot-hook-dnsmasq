@@ -2,10 +2,10 @@
 
 ## Future Subcommands
 
-- [ ] **cleanup-hook**: Add `certbot-hook-dnsmasq cleanup-hook` subcommand for certbot
-  `--manual-cleanup-hook`. Should remove the `dnsmasq.acme.*.conf` file created by
-  `auth-hook`, test the config, and restart dnsmasq. Currently stale ACME challenge
-  configs accumulate in the conf directory.
+- [x] **cleanup-hook**: Add `certbot-hook-dnsmasq cleanup-hook` subcommand for certbot
+  `--manual-cleanup-hook`. Removes the `dnsmasq.acme.*.conf` file created by
+  `auth-hook`, tests the config, and restarts dnsmasq. Supports batch mode via
+  `CERTBOT_REMAINING_CHALLENGES` (defers restart until last cleanup call).
 
 ## Replace External Tools with Native Python
 

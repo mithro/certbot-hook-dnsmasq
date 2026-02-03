@@ -14,12 +14,12 @@ certbot_hook_dnsmasq/        # Python package
     __main__.py              # Enables `python -m certbot_hook_dnsmasq`
     cli.py                   # argparse entry point, dispatches to subcommands
     flatten.py               # Flattens dnsmasq config; extracts config values
-    hook.py                  # Auth-hook orchestration logic
+    hook.py                  # Auth-hook and cleanup-hook orchestration logic
     external.py              # Thin subprocess wrappers for external tools
 tests/
     test_cli.py              # CLI argument parsing and subcommand dispatch
     test_flatten.py          # Config flattening and value extraction
-    test_hook.py             # Auth-hook workflow and helpers
+    test_hook.py             # Auth-hook and cleanup-hook workflow and helpers
     test_external.py         # Subprocess wrapper behaviour
 pyproject.toml               # Package metadata and build config
 TODO.md                      # Planned future work
@@ -27,11 +27,11 @@ TODO.md                      # Planned future work
 
 ## Architecture
 
-Python package (`certbot_hook_dnsmasq`) with two subcommands (`auth-hook` and `flatten-config`):
+Python package (`certbot_hook_dnsmasq`) with three subcommands (`auth-hook`, `cleanup-hook`, and `flatten-config`):
 
 - **`cli.py`** -- argparse entry point with `--version` flag. Config resolution order: CLI flags > environment variables > defaults. Uses typed `_resolve_path` / `_resolve_str` helpers.
 - **`flatten.py`** -- flattens dnsmasq config by recursively following `conf-file=` and `conf-dir=` includes (with cycle detection). `DnsmasqConfigValues` dataclass holds extracted values (auth-zone, auth-sec-servers, public IPv4 via `ipaddress.IPv4Address.is_global`).
-- **`hook.py`** -- auth-hook orchestration with two-phase execution: writes per-challenge config files (hash-based filenames), then on the final invocation restarts dnsmasq, verifies all TXT records locally and on secondaries, sends one NOTIFY, waits for propagation. All subprocess failures are caught and reported cleanly (no raw tracebacks).
+- **`hook.py`** -- auth-hook and cleanup-hook orchestration, both with two-phase execution. Auth-hook writes per-challenge config files (hash-based filenames), then on the final invocation restarts dnsmasq, verifies all TXT records locally and on secondaries, sends one NOTIFY, waits for propagation. Cleanup-hook removes the config files, then on the final invocation tests config and restarts dnsmasq. All subprocess failures are caught and reported cleanly (no raw tracebacks).
 - **`external.py`** -- thin subprocess wrappers for `dig` (`query_all_txt_records`), `ldns-notify`, `systemctl`, `dnsmasq --test`. This is the only module that calls `subprocess.run`.
 
 ### Auth-hook workflow (batch-aware)
@@ -51,6 +51,18 @@ The hook uses `CERTBOT_REMAINING_CHALLENGES` for two-phase execution:
 
 Config files use hash-based naming: `dnsmasq.acme.{domain}.{sha256(token)[:8]}.conf`. This ensures wildcard + base domain challenges (same domain, different tokens) get separate files.
 
+### Cleanup-hook workflow (batch-aware)
+
+The cleanup hook also uses `CERTBOT_REMAINING_CHALLENGES` for two-phase execution:
+
+**Phase 1 (remaining > 0):** Remove config file only, return immediately.
+
+**Phase 2 (remaining == 0):** Remove config file, then finalize:
+1. Validates config (`dnsmasq --test`) and restarts dnsmasq via systemd
+2. Returns 1 (failure) if config test or restart fails
+
+The cleanup hook does not need DNS verification, NOTIFY, or sync waiting -- removed records will propagate on the next zone refresh.
+
 ## Development
 
 ```bash
@@ -64,6 +76,7 @@ The package can also be run as a module:
 ```bash
 uv run python -m certbot_hook_dnsmasq --version
 uv run python -m certbot_hook_dnsmasq auth-hook
+uv run python -m certbot_hook_dnsmasq cleanup-hook
 uv run python -m certbot_hook_dnsmasq flatten-config /etc/dnsmasq.conf
 ```
 
@@ -85,7 +98,7 @@ All tests use `unittest.mock.patch` to mock subprocess calls and filesystem inte
 
 ## Configuration
 
-Auth-hook options (CLI flags override environment variables, which override defaults):
+Auth-hook and cleanup-hook options (CLI flags override environment variables, which override defaults):
 
 | CLI Flag | Environment Variable | Default |
 |---|---|---|
@@ -95,9 +108,9 @@ Auth-hook options (CLI flags override environment variables, which override defa
 
 ### Environment variables (set by certbot)
 
-- `CERTBOT_DOMAIN` -- Domain being validated (required for `auth-hook`)
-- `CERTBOT_VALIDATION` -- ACME challenge token value (required for `auth-hook`)
-- `CERTBOT_REMAINING_CHALLENGES` -- Number of challenges remaining after this one (0 = last). Used for batch mode: when > 0, the hook writes the config file and returns immediately. When 0 or missing, the hook finalizes (restart, verify, notify, wait). Available since certbot 1.4.0.
+- `CERTBOT_DOMAIN` -- Domain being validated (required for `auth-hook` and `cleanup-hook`)
+- `CERTBOT_VALIDATION` -- ACME challenge token value (required for `auth-hook` and `cleanup-hook`)
+- `CERTBOT_REMAINING_CHALLENGES` -- Number of challenges remaining after this one (0 = last). Used for batch mode: when > 0, the hook writes/removes the config file and returns immediately. When 0 or missing, the hook finalizes. Available since certbot 1.4.0.
 
 ### Auto-discovered from dnsmasq config
 
