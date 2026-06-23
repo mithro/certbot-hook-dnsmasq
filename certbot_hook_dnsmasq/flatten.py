@@ -129,9 +129,10 @@ class DnsmasqConfigValues:
     auth_zone: str | None = None
     auth_sec_servers: list[str] = field(default_factory=list)
     public_ipv4: str | None = None
+    interface: str | None = None
 
 
-def _is_public_ipv4(addr_str: str) -> bool:
+def is_public_ipv4(addr_str: str) -> bool:
     """Check if a string is a public (non-private, non-loopback) IPv4 address."""
     try:
         addr = ipaddress.IPv4Address(addr_str)
@@ -147,6 +148,8 @@ def extract_config_values(lines: list[str]) -> DnsmasqConfigValues:
     - auth-server: last value wins, take zone name before any comma
     - auth-sec-servers: all values collected, comma-separated within each line
     - listen-address: first public IPv4 address found
+    - interface: first bound interface (bind-dynamic/bind-interfaces setups name
+      the interface here instead of a listen-address)
     """
     values = DnsmasqConfigValues()
 
@@ -165,7 +168,12 @@ def extract_config_values(lines: list[str]) -> DnsmasqConfigValues:
         elif line.startswith('listen-address='):
             if values.public_ipv4 is None:
                 addr = line.split('=', 1)[1]
-                if _is_public_ipv4(addr):
+                if is_public_ipv4(addr):
                     values.public_ipv4 = addr
+
+        elif line.startswith('interface='):
+            # Bare interface= only; except-interface=/no-dhcp-interface= don't match.
+            if values.interface is None:
+                values.interface = line.split('=', 1)[1]
 
     return values

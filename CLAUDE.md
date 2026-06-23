@@ -29,7 +29,7 @@ pyproject.toml               # Package metadata and build config
 Python package (`certbot_hook_dnsmasq`) with three subcommands (`auth-hook`, `cleanup-hook`, and `flatten-config`):
 
 - **`cli.py`** -- argparse entry point with `--version` flag. Config resolution order: CLI flags > environment variables > defaults. Uses typed `_resolve_path` / `_resolve_str` helpers.
-- **`flatten.py`** -- flattens dnsmasq config by recursively following `conf-file=` and `conf-dir=` includes (with cycle detection). `DnsmasqConfigValues` dataclass holds extracted values (auth-zone, auth-sec-servers, public IPv4 via `ipaddress.IPv4Address.is_global`).
+- **`flatten.py`** -- flattens dnsmasq config by recursively following `conf-file=` and `conf-dir=` includes (with cycle detection). `DnsmasqConfigValues` dataclass holds extracted values (auth-zone, auth-sec-servers, public IPv4 via `is_public_ipv4`/`ipaddress.IPv4Address.is_global`, and the bound `interface`). `is_public_ipv4` is a shared helper (also used by `hook.py`).
 - **`hook.py`** -- auth-hook and cleanup-hook orchestration, both with two-phase execution. Auth-hook writes per-challenge config files (hash-based filenames), then on the final invocation restarts dnsmasq, verifies all TXT records locally and on secondaries, sends one NOTIFY, waits for propagation. Cleanup-hook removes the config files, then on the final invocation tests config and restarts dnsmasq. All subprocess failures are caught and reported cleanly (no raw tracebacks).
 - **`external.py`** -- thin subprocess wrappers for `dig` (`query_all_txt_records`), `ldns-notify`, `systemctl`, `dnsmasq --test`. This is the only module that calls `subprocess.run`.
 
@@ -116,4 +116,6 @@ Auth-hook and cleanup-hook options (CLI flags override environment variables, wh
 The `auth-hook` reads the dnsmasq config to discover:
 - `auth-server=` -- the authoritative zone name (last value wins)
 - `auth-sec-servers=` -- secondary DNS servers to notify
-- `listen-address=` -- first public IPv4 address (used as source IP for queries and NOTIFY)
+- public IPv4 (source IP for `dig` queries and NOTIFY), in priority order:
+  1. the first public `listen-address=`, or
+  2. if the server binds via `bind-dynamic`/`bind-interfaces` (no `listen-address=`), the first public IPv4 on the bound `interface=`, looked up with `ip -4 addr` (`external.interface_ipv4_addresses` → `hook.resolve_interface_public_ipv4`)

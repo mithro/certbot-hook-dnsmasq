@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 from certbot_hook_dnsmasq.external import (
+    interface_ipv4_addresses,
     query_all_txt_records,
     run_dnsmasq_test,
     run_ldns_notify,
@@ -15,6 +16,7 @@ from certbot_hook_dnsmasq.external import (
 from certbot_hook_dnsmasq.flatten import (
     extract_config_values,
     flatten_config,
+    is_public_ipv4,
 )
 
 # CAA record wire format: flags=0, tag="issue", value="letsencrypt.org"
@@ -69,6 +71,18 @@ def read_pending_challenges(conf_dir: Path) -> dict[str, set[str]]:
                 domain = domain_with_dot.rstrip(".")
                 challenges.setdefault(domain, set()).add(token)
     return challenges
+
+
+def resolve_interface_public_ipv4(interface: str) -> str | None:
+    """Return the first public (global) IPv4 address bound to an interface.
+
+    Used when the dnsmasq config binds via `interface=`/`bind-dynamic` instead of
+    a literal `listen-address=`. Returns None if the interface has no public IPv4.
+    """
+    for addr in interface_ipv4_addresses(interface):
+        if is_public_ipv4(addr):
+            return addr
+    return None
 
 
 def verify_local_dns(public_ipv4: str, challenges: dict[str, set[str]]) -> bool:
@@ -175,14 +189,24 @@ def run_auth_hook(
     if not values.auth_sec_servers:
         print("ERROR: No auth-sec-servers found in dnsmasq config", file=sys.stderr)
         return 1
-    if not values.public_ipv4:
-        print("ERROR: No public IPv4 listen-address found in dnsmasq config", file=sys.stderr)
+    # Determine the public IPv4 used to query local DNS and source the NOTIFY.
+    # Prefer an explicit public listen-address; otherwise fall back to the public
+    # IPv4 on the bound interface (bind-dynamic configs have no listen-address).
+    public_ipv4 = values.public_ipv4
+    if public_ipv4 is None and values.interface:
+        public_ipv4 = resolve_interface_public_ipv4(values.interface)
+    if not public_ipv4:
+        print(
+            "ERROR: No public IPv4 address found (no public listen-address, and "
+            "no public IPv4 on the configured interface)",
+            file=sys.stderr,
+        )
         return 1
 
     print("Discovered dnsmasq config:")
     print(f"  Zone: {values.auth_zone}")
     print(f"  Secondary servers: {' '.join(values.auth_sec_servers)}")
-    print(f"  Public IPv4: {values.public_ipv4}")
+    print(f"  Public IPv4: {public_ipv4}")
 
     # Test and restart dnsmasq
     try:
@@ -196,13 +220,13 @@ def run_auth_hook(
     # Discover all pending challenges and verify local DNS
     challenges = read_pending_challenges(conf_dir)
     print(f"Verifying {sum(len(t) for t in challenges.values())} TXT record(s) across {len(challenges)} domain(s)")
-    if not verify_local_dns(values.public_ipv4, challenges):
+    if not verify_local_dns(public_ipv4, challenges):
         return 1
 
     # Notify secondaries and wait for sync
     print("Sending NOTIFY to secondaries...")
     try:
-        run_ldns_notify(values.public_ipv4, values.auth_zone, values.auth_sec_servers)
+        run_ldns_notify(public_ipv4, values.auth_zone, values.auth_sec_servers)
     except subprocess.CalledProcessError as e:
         print(f"ERROR: Command failed: {e.cmd}", file=sys.stderr)
         return 1

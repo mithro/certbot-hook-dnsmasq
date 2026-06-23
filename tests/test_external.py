@@ -6,6 +6,7 @@ import subprocess
 import pytest
 
 from certbot_hook_dnsmasq.external import (
+    interface_ipv4_addresses,
     query_all_txt_records,
     run_dnsmasq_test,
     run_ldns_notify,
@@ -91,3 +92,49 @@ class TestQueryAllTxtRecords:
         mock_run.return_value = MagicMock(stdout="", returncode=9)
         result = query_all_txt_records("8.8.8.8", "_acme-challenge.example.com")
         assert result == set()
+
+
+class TestInterfaceIpv4Addresses:
+    @patch("certbot_hook_dnsmasq.external.subprocess.run")
+    def test_returns_addresses_from_json(self, mock_run):
+        mock_run.return_value = MagicMock(
+            stdout='[{"ifname":"eth0","addr_info":'
+                   '[{"family":"inet","local":"87.121.95.37","scope":"global"}]}]',
+            returncode=0,
+        )
+        result = interface_ipv4_addresses("eth0")
+        assert result == ["87.121.95.37"]
+        mock_run.assert_called_once_with(
+            ["ip", "-j", "-4", "addr", "show", "dev", "eth0"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    @patch("certbot_hook_dnsmasq.external.subprocess.run")
+    def test_returns_addresses_in_order(self, mock_run):
+        mock_run.return_value = MagicMock(
+            stdout='[{"addr_info":[{"family":"inet","local":"203.0.113.1"},'
+                   '{"family":"inet","local":"10.0.0.1"}]}]',
+            returncode=0,
+        )
+        result = interface_ipv4_addresses("eth0")
+        assert result == ["203.0.113.1", "10.0.0.1"]
+
+    @patch("certbot_hook_dnsmasq.external.subprocess.run")
+    def test_returns_empty_on_failure(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="", returncode=1)
+        result = interface_ipv4_addresses("eth0")
+        assert result == []
+
+    @patch("certbot_hook_dnsmasq.external.subprocess.run")
+    def test_returns_empty_on_invalid_json(self, mock_run):
+        mock_run.return_value = MagicMock(stdout="", returncode=0)
+        result = interface_ipv4_addresses("eth0")
+        assert result == []
+
+    @patch("certbot_hook_dnsmasq.external.subprocess.run")
+    def test_returns_empty_when_no_addresses(self, mock_run):
+        mock_run.return_value = MagicMock(stdout='[{"ifname":"eth0"}]', returncode=0)
+        result = interface_ipv4_addresses("eth0")
+        assert result == []

@@ -293,3 +293,25 @@ class TestExtractConfigValues:
         assert values.auth_zone == "example.com"
         assert values.auth_sec_servers == ["ns2.example.com", "ns3.example.com"]
         assert values.public_ipv4 == "93.184.216.34"
+
+    def test_extracts_interface(self):
+        lines = ["interface=eth0"]
+        values = extract_config_values(lines)
+        assert values.interface == "eth0"
+
+    def test_interface_first_wins(self):
+        lines = ["interface=eth0", "interface=eth1"]
+        values = extract_config_values(lines)
+        assert values.interface == "eth0"
+
+    def test_interface_ignores_except_interface(self):
+        # bind-dynamic setups list except-interface=lo and no-dhcp-interface=*;
+        # only a bare interface= names the bound interface.
+        lines = ["except-interface=lo", "no-dhcp-interface=*", "interface=eth0"]
+        values = extract_config_values(lines)
+        assert values.interface == "eth0"
+
+    def test_missing_interface_returns_none(self):
+        lines = ["listen-address=93.184.216.34"]
+        values = extract_config_values(lines)
+        assert values.interface is None

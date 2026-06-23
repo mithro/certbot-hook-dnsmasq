@@ -8,7 +8,7 @@ from unittest.mock import patch, call
 import pytest
 
 from certbot_hook_dnsmasq.flatten import DnsmasqConfigValues
-from certbot_hook_dnsmasq.hook import run_auth_hook, run_cleanup_hook, write_acme_challenge, verify_local_dns, wait_for_sync, read_pending_challenges, remove_acme_challenge
+from certbot_hook_dnsmasq.hook import run_auth_hook, run_cleanup_hook, write_acme_challenge, verify_local_dns, wait_for_sync, read_pending_challenges, remove_acme_challenge, resolve_interface_public_ipv4
 
 
 class TestWriteAcmeChallenge:
@@ -94,6 +94,30 @@ class TestReadPendingChallenges:
     def test_empty_directory(self, tmp_path):
         challenges = read_pending_challenges(tmp_path)
         assert challenges == {}
+
+
+class TestResolveInterfacePublicIpv4:
+    @patch("certbot_hook_dnsmasq.hook.interface_ipv4_addresses")
+    def test_returns_first_global_address(self, mock_addrs):
+        # eth0 typically carries the public address plus internal/CGNAT/docker ones.
+        mock_addrs.return_value = [
+            "10.1.10.1", "100.102.142.39", "87.121.95.37", "172.17.0.1",
+        ]
+        result = resolve_interface_public_ipv4("eth0")
+        assert result == "87.121.95.37"
+        mock_addrs.assert_called_once_with("eth0")
+
+    @patch("certbot_hook_dnsmasq.hook.interface_ipv4_addresses")
+    def test_returns_none_when_no_global_address(self, mock_addrs):
+        mock_addrs.return_value = ["10.1.10.1", "192.168.1.1"]
+        result = resolve_interface_public_ipv4("eth0")
+        assert result is None
+
+    @patch("certbot_hook_dnsmasq.hook.interface_ipv4_addresses")
+    def test_returns_none_when_no_addresses(self, mock_addrs):
+        mock_addrs.return_value = []
+        result = resolve_interface_public_ipv4("eth0")
+        assert result is None
 
 
 class TestVerifyLocalDns:
@@ -288,6 +312,121 @@ class TestRunAuthHook:
         mock_verify.assert_called_once_with("203.0.113.1", {"example.com": {"test-token"}})
         mock_notify.assert_called_once()
         mock_wait.assert_called_once()
+
+    @patch("certbot_hook_dnsmasq.hook.wait_for_sync")
+    @patch("certbot_hook_dnsmasq.hook.run_ldns_notify")
+    @patch("certbot_hook_dnsmasq.hook.verify_local_dns")
+    @patch("certbot_hook_dnsmasq.hook.read_pending_challenges")
+    @patch("certbot_hook_dnsmasq.hook.run_systemctl")
+    @patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test")
+    @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
+    @patch("certbot_hook_dnsmasq.hook.resolve_interface_public_ipv4")
+    @patch("certbot_hook_dnsmasq.hook.extract_config_values")
+    @patch("certbot_hook_dnsmasq.hook.flatten_config")
+    def test_resolves_public_ipv4_from_interface_when_no_listen_address(
+        self, mock_flatten, mock_extract, mock_resolve_iface, mock_write,
+        mock_test, mock_systemctl, mock_read_pending,
+        mock_verify, mock_notify, mock_wait,
+        tmp_path,
+    ):
+        # bind-dynamic config: no listen-address, but interface= names the NIC.
+        mock_flatten.return_value = ["auth-server=example.com", "interface=eth0"]
+        mock_extract.return_value = DnsmasqConfigValues(
+            auth_zone="example.com",
+            auth_sec_servers=["ns2.example.com"],
+            public_ipv4=None,
+            interface="eth0",
+        )
+        mock_resolve_iface.return_value = "203.0.113.1"
+        mock_write.return_value = tmp_path / "test.conf"
+        mock_read_pending.return_value = {"example.com": {"test-token"}}
+        mock_verify.return_value = True
+        mock_wait.return_value = True
+
+        result = run_auth_hook(
+            conf_dir=tmp_path,
+            conf=Path("/etc/dnsmasq.conf"),
+            service="dnsmasq",
+            domain="example.com",
+            validation="test-token",
+            remaining_challenges=0,
+        )
+
+        assert result == 0
+        mock_resolve_iface.assert_called_once_with("eth0")
+        mock_verify.assert_called_once_with("203.0.113.1", {"example.com": {"test-token"}})
+
+    @patch("certbot_hook_dnsmasq.hook.wait_for_sync")
+    @patch("certbot_hook_dnsmasq.hook.run_ldns_notify")
+    @patch("certbot_hook_dnsmasq.hook.verify_local_dns")
+    @patch("certbot_hook_dnsmasq.hook.read_pending_challenges")
+    @patch("certbot_hook_dnsmasq.hook.run_systemctl")
+    @patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test")
+    @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
+    @patch("certbot_hook_dnsmasq.hook.resolve_interface_public_ipv4")
+    @patch("certbot_hook_dnsmasq.hook.extract_config_values")
+    @patch("certbot_hook_dnsmasq.hook.flatten_config")
+    def test_listen_address_takes_precedence_over_interface(
+        self, mock_flatten, mock_extract, mock_resolve_iface, mock_write,
+        mock_test, mock_systemctl, mock_read_pending,
+        mock_verify, mock_notify, mock_wait,
+        tmp_path,
+    ):
+        # An explicit public listen-address wins; the interface is not consulted.
+        mock_extract.return_value = DnsmasqConfigValues(
+            auth_zone="example.com",
+            auth_sec_servers=["ns2.example.com"],
+            public_ipv4="93.184.216.34",
+            interface="eth0",
+        )
+        mock_write.return_value = tmp_path / "test.conf"
+        mock_read_pending.return_value = {"example.com": {"test-token"}}
+        mock_verify.return_value = True
+        mock_wait.return_value = True
+
+        result = run_auth_hook(
+            conf_dir=tmp_path,
+            conf=Path("/etc/dnsmasq.conf"),
+            service="dnsmasq",
+            domain="example.com",
+            validation="test-token",
+            remaining_challenges=0,
+        )
+
+        assert result == 0
+        mock_resolve_iface.assert_not_called()
+        mock_verify.assert_called_once_with("93.184.216.34", {"example.com": {"test-token"}})
+
+    @patch("certbot_hook_dnsmasq.hook.read_pending_challenges")
+    @patch("certbot_hook_dnsmasq.hook.run_systemctl")
+    @patch("certbot_hook_dnsmasq.hook.run_dnsmasq_test")
+    @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
+    @patch("certbot_hook_dnsmasq.hook.resolve_interface_public_ipv4")
+    @patch("certbot_hook_dnsmasq.hook.extract_config_values")
+    @patch("certbot_hook_dnsmasq.hook.flatten_config")
+    def test_exits_when_interface_has_no_public_ipv4(
+        self, mock_flatten, mock_extract, mock_resolve_iface, mock_write,
+        mock_test, mock_systemctl, mock_read_pending,
+        tmp_path,
+    ):
+        mock_extract.return_value = DnsmasqConfigValues(
+            auth_zone="example.com",
+            auth_sec_servers=["ns2.example.com"],
+            public_ipv4=None,
+            interface="eth0",
+        )
+        mock_resolve_iface.return_value = None  # interface has no public IPv4
+        mock_write.return_value = tmp_path / "test.conf"
+
+        result = run_auth_hook(
+            conf_dir=tmp_path,
+            conf=Path("/etc/dnsmasq.conf"),
+            service="dnsmasq",
+            domain="example.com",
+            validation="test-token",
+            remaining_challenges=0,
+        )
+        assert result == 1
 
     @patch("certbot_hook_dnsmasq.hook.write_acme_challenge")
     def test_write_only_when_remaining_positive(self, mock_write, tmp_path):

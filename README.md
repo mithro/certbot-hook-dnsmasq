@@ -8,7 +8,7 @@ Certbot hook for DNS-01 challenge authentication using a dnsmasq server.
 
 This tool creates temporary TXT records in dnsmasq for ACME DNS-01 challenges, allowing certbot to obtain wildcard certificates or certificates for servers that aren't publicly accessible via HTTP.
 
-It auto-discovers your DNS setup from the dnsmasq config (`auth-server`, `auth-sec-servers`, `listen-address`) so there is minimal configuration needed.
+It auto-discovers your DNS setup from the dnsmasq config (`auth-server`, `auth-sec-servers`, and either `listen-address` or the bound `interface`) so there is minimal configuration needed.
 
 ## Requirements
 
@@ -125,7 +125,9 @@ From the dnsmasq config (after flattening all includes):
 
 - **`auth-server=`** -- the authoritative zone name (last value wins, takes the zone name before any comma)
 - **`auth-sec-servers=`** -- secondary DNS servers to notify (all values collected)
-- **`listen-address=`** -- the first public IPv4 address found (used as source IP for dig queries and ldns-notify)
+- **public IPv4** -- used as the source IP for `dig` queries and `ldns-notify`, discovered in priority order:
+  1. the first public `listen-address=`, or
+  2. if the server binds via `bind-dynamic`/`bind-interfaces` (no `listen-address=`), the first public (globally-routable) IPv4 on the bound `interface=`, looked up with `ip -4 addr`.
 
 ## Development
 
